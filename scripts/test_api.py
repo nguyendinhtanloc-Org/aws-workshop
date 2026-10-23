@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Probe the GHN API with your token - no AWS account needed.
+
+This is the fastest way to find out whether your token works and what the
+real payloads look like, before deploying anything.
+
+Usage:
+    export GHN_API_TOKEN=your_token_here
+    python3 scripts/test_api.py
+
+    # inspect a specific endpoint
+    python3 scripts/test_api.py --endpoint /api/v1/apiv3/getOrder --limit 3
+
+The script only reads. It never writes to S3, Kinesis or DynamoDB.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "lambda", "ingestor"))
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
+from ghn_client import GhnClient, GhnClientError  # noqa: E402
+
+ENDPOINTS = {
+    "provinces": "/api/v1/apiv3/getProvinces",
+    "districts": "/api/v1/apiv3/getDistricts",
+    "wards": "/api/v1/apiv3/getWards",
+    "orders": "/api/v1/apiv3/getOrder",
+    "shipping": "/api/v1/apiv3/getShippingStatus",
+}
+
+
+def _token() -> str:
+    token = os.environ.get("GHN_API_TOKEN")
+    if not token:
+        sys.exit(
+            "No token found.\n"
+            "  export GHN_API_TOKEN=your_token_here\n"
+            "  (or put it in a .env file next to .env.example)"
+        )
+    return token
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--endpoint",
+        choices=[*ENDPOINTS, "all"],
+        default="all",
+        help="which endpoint to probe (default: all)",
+    )
+    parser.add_argument("--limit", type=int, default=2, help="records to print per endpoint")
+    args = parser.parse_args()
+
+    client = GhnClient(token=_token())
+    targets = ENDPOINTS if args.endpoint == "all" else {args.endpoint: ENDPOINTS[args.endpoint]}
+
+    failures = 0
+    for name, path in targets.items():
+        print(f"\n=== {name}  ({path}) ===")
+        try:
+            payload = client._get(path)  # noqa: SLF001 - deliberate probe
+        except GhnClientError as exc:
+            print(f"  FAILED: {exc}")
+            failures += 1
+            continue
+
+        data = payload.get("data")
+        if isinstance(data, list):
+            print(f"  {len(data)} record(s)")
+            for record in data[: args.limit]:
+                print("  " + json.dumps(record, ensure_ascii=False, indent=2).replace("\n", "\n  "))
+        else:
+            print("  " + json.dumps(payload, ensure_ascii=False, indent=2)[:2000])
+
+    if failures:
+        print(f"\n{failures} endpoint(s) failed - check your token and permissions.")
+        return 1
+    print("\nAll endpoints responded successfully.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

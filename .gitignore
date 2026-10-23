@@ -236,3 +236,7 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# local scratch
+pytest_shim.py
+**/pytest_shim.py

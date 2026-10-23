@@ -21,30 +21,30 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 
+from ingestor_config import get_config
 from ghn_client import GhnClient, GhnClientError
 from validator import ValidationError, validate_master_data, validate_order
 
 logger = logging.getLogger()
-logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
 
+# boto3 clients are created at import time. In AWS the Lambda runtime
+# already provides credentials, so this is safe and cheap.
 s3 = boto3.client("s3")
-secrets = boto3.client("secretsmanager")
 kinesis = boto3.client("kinesis")
-
-RAW_BUCKET = os.environ["RAW_BUCKET_NAME"]
-GHN_SECRET_ARN = os.environ["GHN_SECRET_ARN"]
-KINESIS_STREAM_NAME = os.environ.get("KINESIS_STREAM_NAME", "")
 
 # Order matters: master data must land before orders that reference it.
 SOURCES = ("master_data", "orders", "shipping_status")
 
 
 def _get_token() -> str:
-    """Read the GHN API token from Secrets Manager. Never logged."""
+    """Read the GHN API token - from Secrets Manager in AWS, .env locally."""
+    secret_arn = os.environ.get("GHN_SECRET_ARN")
+    if not secret_arn:
+        return get_config()["ghn_token"]
     try:
-        resp = secrets.get_secret_value(SecretId=GHN_SECRET_ARN)
+        resp = boto3.client("secretsmanager").get_secret_value(SecretId=secret_arn)
     except ClientError as exc:
-        raise GhnClientError(f"cannot read secret {GHN_SECRET_ARN}: {exc}") from exc
+        raise GhnClientError(f"cannot read secret {secret_arn}: {exc}") from exc
     return json.loads(resp["SecretString"])["token"]
 
 
@@ -58,7 +58,7 @@ def _write_raw(source: str, payload: list[dict[str, Any]]) -> str:
         default=str,
     )
     s3.put_object(
-        Bucket=RAW_BUCKET,
+        Bucket=os.environ.get("RAW_BUCKET_NAME", "ghn-analytics-dev-raw"),
         Key=key,
         Body=body.encode("utf-8"),
         ContentType="application/json",
@@ -68,7 +68,8 @@ def _write_raw(source: str, payload: list[dict[str, Any]]) -> str:
 
 def _publish(source: str, records: list[dict[str, Any]]) -> int:
     """Publish records to the Kinesis stream. Returns the number sent."""
-    if not KINESIS_STREAM_NAME or not records:
+    stream_name = os.environ.get("KINESIS_STREAM_NAME", "")
+    if not stream_name or not records:
         return 0
 
     sent = 0
@@ -79,7 +80,7 @@ def _publish(source: str, records: list[dict[str, Any]]) -> int:
             default=str,
         )
         kinesis.put_record(
-            StreamName=KINESIS_STREAM_NAME,
+            StreamName=stream_name,
             Data=payload.encode("utf-8"),
             PartitionKey=str(record.get("order_code") or record.get("entity") or sent),
         )
@@ -94,6 +95,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     other sources: partial ingestion is better than none, and the missing
     source is retried on the next scheduled run.
     """
+    logging.getLogger().setLevel(os.environ.get("LOG_LEVEL", "INFO"))
     client = GhnClient(token=_get_token())
     summary: dict[str, Any] = {"written": {}, "published": {}, "errors": {}}
 

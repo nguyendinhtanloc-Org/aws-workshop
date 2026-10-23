@@ -45,6 +45,45 @@ make install
 make check          # lint + typecheck + unit tests
 ```
 
+### Trying it without deploying anything
+
+You can exercise the pipeline logic on a laptop, before any AWS resource
+exists. Two ways, depending on what you want to check:
+
+**Check the code logic (no token, no network, no dependencies):**
+
+```bash
+make test-standalone
+# or: python3 run_tests.py -v
+```
+
+This runs the whole unit suite - validation, transformation, idempotent
+DynamoDB writes, API retry behaviour, data-quality rules - using only
+the Python standard library. Useful on a fresh machine or in CI before
+the toolchain is installed.
+
+**Check that your GHN token works and see the real payloads:**
+
+```bash
+cp .env.example .env      # then paste your token into GHN_API_TOKEN
+make test-api             # read-only probe of every endpoint
+```
+
+`make test-api` never writes to S3, Kinesis or DynamoDB. It just calls
+the API and prints the records, so you can confirm the token, the field
+names and the record shapes before anything is deployed.
+
+### Local configuration
+
+`.env` holds local-only settings and is gitignored. The Ingestor reads
+its token from `GHN_API_TOKEN` when `GHN_SECRET_ARN` is unset, and from
+AWS Secrets Manager when it is set - the same code path serves both, so
+what you test locally is what runs in AWS.
+
+```bash
+cp .env.example .env
+```
+
 ## Deploying
 
 ```bash
