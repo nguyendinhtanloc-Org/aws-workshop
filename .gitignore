@@ -220,6 +220,12 @@ __marimo__/
 .streamlit/secrets.toml
 
 # --- GHN Logistics Analytics Platform ---
+# The stock Python gitignore has `lib/`, which would silently exclude
+# src/glue/lib/ - the shared modules the ETL jobs import. Re-include the
+# source files only; __pycache__ stays ignored.
+!src/glue/lib/
+!src/glue/lib/**
+src/glue/lib/__pycache__/
 .venv/
 .env
 .env.*
