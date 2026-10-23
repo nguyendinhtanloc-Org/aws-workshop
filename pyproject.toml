@@ -1,0 +1,43 @@
+[project]
+name = "ghn-logistics-analytics"
+version = "0.1.0"
+description = "GHN Logistics Analytics Platform - data pipeline on AWS"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["cdk.out", "src/glue/jobs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "C4", "SIM", "RUF"]
+ignore = ["E501", "B008"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+extend-exclude = "cdk.out"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+exclude = ["cdk.out", "src/glue/jobs"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "src/lambda/ingestor/tests", "src/lambda/processor/tests", "src/glue/tests"]
+pythonpath = ["."]
+addopts = "-q --cov=src --cov-report=term-missing --cov-report=xml"
+markers = [
+    "integration: requires localstack/moto",
+    "e2e: full pipeline test",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/tests/*", "cdk.out/*"]
+
+[tool.commitlint]
+extends = ["@commitlint/config-conventional"]

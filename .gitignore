@@ -218,3 +218,21 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- GHN Logistics Analytics Platform ---
+.venv/
+.env
+.env.*
+!.env.example
+coverage.xml
+htmlcov/
+cdk.out/
+cdk.context.json
+*.ts
+*.js
+!jest.config.js
+node_modules/
+dist/
+.DS_Store
+.idea/
+.vscode/
