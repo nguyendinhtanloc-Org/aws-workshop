@@ -40,9 +40,13 @@ DLQ holds everything that failed.
 ## Getting started
 
 ```bash
-make venv
-make install
-make check          # lint + typecheck + unit tests
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+
+ruff check src cdk tests scripts   # lint
+mypy src cdk tests                 # typecheck
+pytest                              # unit tests
 ```
 
 ### Trying it without deploying anything
@@ -53,8 +57,7 @@ exists. Two ways, depending on what you want to check:
 **Check the code logic (no token, no network, no dependencies):**
 
 ```bash
-make test-standalone
-# or: python3 run_tests.py -v
+python3 run_tests.py -v
 ```
 
 This runs the whole unit suite - validation, transformation, idempotent
@@ -66,10 +69,10 @@ the toolchain is installed.
 
 ```bash
 cp .env.example .env      # then paste your token into GHN_API_TOKEN
-make test-api             # read-only probe of every endpoint
+python3 scripts/test_api.py        # read-only probe of every endpoint
 ```
 
-`make test-api` never writes to S3, Kinesis or DynamoDB. It just calls
+`scripts/test_api.py` never writes to S3, Kinesis or DynamoDB. It just calls
 the API and prints the records, so you can confirm the token, the field
 names and the record shapes before anything is deployed.
 
@@ -88,7 +91,7 @@ cp .env.example .env
 
 ```bash
 aws configure          # once
-make deploy           # cdk deploy --all
+cdk deploy --all --app "python cdk/app.py"
 ```
 
 Deploy order is enforced by stack dependencies: base → {ingestion, streaming,
@@ -106,7 +109,7 @@ aws secretsmanager put-secret-value \
 ## Daily operations
 
 ```bash
-make validate-env                # pre-deploy sanity checks
+python scripts/validate_env.py             # pre-deploy sanity checks
 python scripts/replay_dlq.py <dlq-url> --dry-run
 python scripts/backfill.py --days 7 --dry-run
 ```

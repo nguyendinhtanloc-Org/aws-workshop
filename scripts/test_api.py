@@ -31,13 +31,19 @@ except ImportError:
 
 from ghn_client import GhnClient, GhnClientError  # noqa: E402
 
+# Endpoint paths from the GHN API documentation (Appendix A of the
+# proposal). Verify against https://developer.ghn.dev before relying on
+# any of them - GHN has changed these paths between API generations.
 ENDPOINTS = {
     "provinces": "/api/v1/apiv3/getProvinces",
     "districts": "/api/v1/apiv3/getDistricts",
-    "wards": "/api/v1/apiv3/getWards",
+    "wards": "/api/v1/apiv3/getWard",
     "orders": "/api/v1/apiv3/getOrder",
-    "shipping": "/api/v1/apiv3/getShippingStatus",
 }
+
+# getTransportCost takes a POST body (from/to address, weight), so it is
+# not probed by this GET-only script. The Ingestor does not use it today;
+# shipping_fee comes from the order record itself.
 
 
 def _token() -> str:

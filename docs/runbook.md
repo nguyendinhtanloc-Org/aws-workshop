@@ -117,9 +117,9 @@ python scripts/backfill.py --source orders --days 7
 ## Deploying a change
 
 ```bash
-make check           # same gate as CI
-make cdk-diff        # see what will change
-make deploy
+ruff check src cdk tests scripts && mypy src cdk tests && pytest
+cdk diff --app "python cdk/app.py"        # see what will change
+cdk deploy --all --app "python cdk/app.py"
 ```
 
 To roll back a bad deploy: `cdk deploy --all --app "python cdk/app.py"` after

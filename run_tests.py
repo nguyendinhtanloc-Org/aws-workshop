@@ -104,6 +104,7 @@ TEST_FILES = [
     "src/lambda/ingestor/tests/test_validator.py",
     "src/lambda/ingestor/tests/test_ghn_client.py",
     "src/lambda/ingestor/tests/test_config.py",
+    "src/lambda/ingestor/tests/test_handler.py",
     "src/lambda/processor/tests/test_transformer.py",
     "src/lambda/processor/tests/test_ddb_writer.py",
     "src/glue/tests/test_quality.py",

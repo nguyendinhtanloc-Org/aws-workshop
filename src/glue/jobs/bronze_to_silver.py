@@ -1,7 +1,13 @@
-"""Glue ETL job: curated (bronze) orders -> query-ready silver table.
+"""Glue ETL job: curated (bronze) -> query-ready silver Parquet tables.
 
-Reads Parquet from the curated bucket, applies type casting and business
-rules, and writes a partitioned Parquet table back to the same bucket.
+The curated layer is written by Firehose as gzip-compressed JSON. This job
+reads it back, applies the silver transformation rules, and writes typed,
+partitioned Parquet - the layer Athena actually queries.
+
+The stream carries order records wrapped in the ingest envelope
+``{"source", "ingested_at", "record"}`` that the Ingestor adds. This job
+unwraps the envelope and branches on the source field, writing one table
+per source.
 """
 from __future__ import annotations
 
@@ -11,6 +17,8 @@ from awsglue.context import GlueContext
 from awsglue.job import Job
 from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
 
 ARGS = getResolvedOptions(
     sys.argv,
@@ -24,39 +32,61 @@ job = Job(glue_context)
 job.init(ARGS["JOB_NAME"], ARGS)
 
 BUCKET = ARGS["curated-bucket"]
-DATABASE = ARGS["database-name"]
 RAW = f"s3://{BUCKET}/{ARGS['raw-prefix']}"
 SILVER = f"s3://{BUCKET}/{ARGS['silver-prefix']}"
 
+# The order record, without the ingest envelope. This is the schema the
+# GHN API actually returns: note it has NO lead_time_hours - that value
+# does not exist at the source and is computed below.
+ORDER_SCHEMA = (
+    "order_id string, order_code string, status string, "
+    "created_at string, delivered_at string, weight double, "
+    "shipping_fee double, cod_amount double, "
+    "from_province_id int, from_district_id int, "
+    "to_province_id int, to_district_id int"
+)
 
-def build_silver_frame():
-    """Read bronze Parquet and apply the silver transformation rules."""
-    df = spark.read.parquet(RAW)
 
-    # Business rules:
-    # - an order is 'delivered' only if it has a delivery timestamp
-    # - lead time is recomputed from timestamps, not trusted from source
-    # - weight is clamped to a sane upper bound (typo protection)
-    df = df.withColumn(
+def read_bronze_orders() -> DataFrame:
+    """Read the order records, unwrapping the ingest envelope."""
+    df = spark.read.json(RAW)
+    unwrapped = df.select(
+        F.from_json(F.col("record").cast("string"), F.struct(ORDER_SCHEMA)).alias("o")
+    ).select("o.*")
+    return unwrapped.filter(unwrapped["order_code"].isNotNull())
+
+
+def apply_silver_rules(df: DataFrame) -> DataFrame:
+    """Business rules for the silver orders table."""
+    out = df.withColumn(
         "is_delivered",
-        (spark.col("status") == "delivered") & spark.col("delivered_at").isNotNull(),
+        (F.col("status") == "delivered") & F.col("delivered_at").isNotNull(),
     )
-    df = df.withColumn(
+    out = out.withColumn("created_ts", F.to_timestamp(F.col("created_at")))
+    out = out.withColumn("delivered_ts", F.to_timestamp(F.col("delivered_at")))
+    out = out.withColumn(
         "lead_time_hours",
-        spark.greatest(
-            spark.col("lead_time_hours").cast("double"),
-            spark.lit(0.0),
-        ),
+        F.when(
+            F.col("delivered_ts").isNotNull() & F.col("created_ts").isNotNull(),
+            (F.col("delivered_ts") - F.col("created_ts")) / (F.lit(1.0) / 24.0),
+        ).cast("double"),
     )
-    df = df.withColumn("weight", spark.least(spark.col("weight").cast("double"), spark.lit(1000.0)))
-    return df
+    out = out.withColumn(
+        "lead_time_hours",
+        F.greatest(F.col("lead_time_hours"), F.lit(0.0)),
+    )
+    out = out.withColumn("weight", F.least(F.col("weight").cast("double"), F.lit(1000.0)))
+    return out.drop("created_ts", "delivered_ts")
 
 
 def main() -> None:
-    """Run the ETL job."""
-    silver_df = build_silver_frame()
-    silver_df.write.mode("overwrite").partitionBy("to_province_id").parquet(SILVER)
-    print(f"silver rows={silver_df.count()}")
+    """Write the silver orders table, partitioned by destination province."""
+    orders = read_bronze_orders()
+    silver = apply_silver_rules(orders)
+    silver.write.mode("overwrite").partitionBy("to_province_id").parquet(
+        f"{SILVER}/orders/"
+    )
+    print(f"silver orders rows={silver.count()}")
 
 
 if __name__ == "__main__":

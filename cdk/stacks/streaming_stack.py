@@ -36,11 +36,18 @@ class StreamingStack(Stack):
             self,
             "OrdersDeliveryStream",
             source=firehose.KinesisStreamSource(stream=self.stream),
+            # JSON, not Parquet. The stream carries three different record
+            # shapes (orders, master data, shipping status) and Firehose's
+            # Parquet conversion needs one schema for the whole batch -
+            # mixed shapes fail conversion and land in the error prefix.
+            # Glue reads this JSON layer and writes the typed Parquet
+            # silver tables, which is where the schema belongs.
             destination=firehose.S3Bucket(
                 base.curated_bucket,
                 "curated/",
                 encryption_key=base.curated_data_key,
                 compression=firehose.Compression.GZIP,
+                format=firehose.Format.JSON,
                 data_output_prefix="orders/",
                 error_output_prefix="errors/",
                 file_suffix="",

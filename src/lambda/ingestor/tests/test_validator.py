@@ -61,3 +61,27 @@ def test_master_data_accepts_all_entities():
 def test_empty_master_data_raises():
     with pytest.raises(ValidationError, match="empty"):
         validate_master_data([])
+
+
+def test_ghn_native_statuses_are_accepted():
+    """The GHN API's own status vocabulary must pass validation."""
+    for status in ("cancel", "pending", "processing", "delivering", "delivered", "fail", "return"):
+        validate_order(dict(VALID_ORDER, status=status))
+
+
+def test_normalised_statuses_are_also_accepted():
+    for status in ("cancelled", "picked", "in_transit", "failed", "returned"):
+        validate_order(dict(VALID_ORDER, status=status))
+
+
+def test_genuinely_unknown_status_is_rejected():
+    with pytest.raises(ValidationError, match="unknown status"):
+        validate_order(dict(VALID_ORDER, status="teleported"))
+
+
+def test_normalise_status_maps_ghn_values():
+    from validator import normalise_status
+
+    assert normalise_status("delivering") == "in_transit"
+    assert normalise_status("fail") == "failed"
+    assert normalise_status("cancel") == "cancelled"

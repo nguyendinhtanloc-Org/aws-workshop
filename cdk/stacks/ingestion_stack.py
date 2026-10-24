@@ -9,7 +9,7 @@ from aws_cdk import aws_secretsmanager as secretsmanager
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
-from constructs.lambda_function import PipelineLambdaFunction
+from cdk_constructs.lambda_function import PipelineLambdaFunction
 from stacks.base_stack import BaseStack
 from stacks.streaming_stack import StreamingStack
 

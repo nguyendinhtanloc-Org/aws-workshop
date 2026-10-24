@@ -20,7 +20,14 @@ class BaseStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **props: StackProps) -> None:
         super().__init__(scope, construct_id, **props)
 
-        # --- VPC (isolated, no internet egress needed for data path) ------
+        # --- VPC ---------------------------------------------------------
+        # Nothing in this pipeline runs inside a VPC: the Lambdas call the
+        # GHN API and the AWS APIs directly, and Glue runs in a managed
+        # VPC. A VPC with a NAT gateway would cost ~$33/month - half the
+        # project budget - for nothing.
+        #
+        # The VPC is still created because the Glue ETL jobs need one, and
+        # it uses a single NAT gateway rather than one per AZ.
         self.vpc = ec2.Vpc(
             self,
             "Vpc",
@@ -35,11 +42,6 @@ class BaseStack(Stack):
                 ec2.SubnetConfiguration(
                     name="private",
                     subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS,
-                    cidr_mask=24,
-                ),
-                ec2.SubnetConfiguration(
-                    name="isolated",
-                    subnet_type=ec2.SubnetType.ISOLATED,
                     cidr_mask=24,
                 ),
             ],

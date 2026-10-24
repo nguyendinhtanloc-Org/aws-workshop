@@ -56,3 +56,36 @@ def test_optional_fields_default_to_none():
     item = transform_order(order)
     assert item["weight"] is None
     assert item["delivered_at"] is None
+
+
+def test_numeric_fields_are_decimal():
+    """boto3 rejects Python floats, so numeric fields must be Decimal."""
+    from decimal import Decimal
+
+    order = dict(BASE, weight=2.5, shipping_fee=32000, cod_amount=150000.0)
+    item = transform_order(order)
+    assert isinstance(item["weight"], Decimal)
+    assert isinstance(item["shipping_fee"], Decimal)
+    assert isinstance(item["cod_amount"], Decimal)
+    assert isinstance(item["lead_time_hours"], Decimal)
+
+
+def test_ghn_status_is_normalised():
+    """GHN's raw status values map onto the project's vocabulary."""
+    cases = {
+        "delivering": "in_transit",
+        "fail": "failed",
+        "cancel": "cancelled",
+        "return": "returned",
+        "processing": "picked",
+        "delivered": "delivered",
+    }
+    for raw, expected in cases.items():
+        item = transform_order(dict(BASE, status=raw))
+        assert item["status"] == expected, raw
+
+
+def test_unknown_status_passes_through_unchanged():
+    """The validator rejects unknown statuses; the transformer does not guess."""
+    item = transform_order(dict(BASE, status="something_new"))
+    assert item["status"] == "something_new"

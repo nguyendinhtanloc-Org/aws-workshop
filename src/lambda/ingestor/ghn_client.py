@@ -37,38 +37,53 @@ class GhnClient:
         return {"Token": self._token}
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """GET an endpoint, retrying transient failures with backoff.
+
+        Only a 429 or a 5xx is retried; a 4xx is a client error and is
+        raised immediately. The wait happens between attempts, so the
+        final failed attempt does not sleep before the error is raised.
+        """
         url = f"{self._base_url}{path}"
         last_error: Exception | None = None
 
         for attempt in range(MAX_RETRIES):
+            retryable = False
+
             try:
                 resp = self._session.get(
                     url, headers=self._headers(), params=params, timeout=TIMEOUT_SECONDS
                 )
             except requests.RequestException as exc:
                 last_error = exc
+                retryable = True
                 logger.warning("request error path=%s attempt=%s error=%s", path, attempt, exc)
             else:
                 if resp.status_code == 429:
-                    delay = BACKOFF_BASE_SECONDS * (2**attempt)
-                    logger.warning("rate limited path=%s retry in %.1fs", path, delay)
-                    time.sleep(delay)
-                    continue
-                if resp.status_code >= 500:
-                    delay = BACKOFF_BASE_SECONDS * (2**attempt)
-                    logger.warning("server error path=%s status=%s retry in %.1fs",
-                                   path, resp.status_code, delay)
-                    time.sleep(delay)
-                    continue
-                if resp.status_code >= 400:
+                    retryable = True
+                    logger.warning("rate limited path=%s attempt=%s", path, attempt)
+                elif resp.status_code >= 500:
+                    retryable = True
+                    logger.warning(
+                        "server error path=%s status=%s attempt=%s",
+                        path,
+                        resp.status_code,
+                        attempt,
+                    )
+                elif resp.status_code >= 400:
                     raise GhnClientError(f"GHN API error path={path} status={resp.status_code}")
+                else:
+                    payload = resp.json()
+                    if payload.get("code") not in (200, None):
+                        raise GhnClientError(
+                            f"GHN API error path={path} code={payload.get('code')}"
+                        )
+                    return payload
 
-                payload = resp.json()
-                if payload.get("code") not in (200, None):
-                    raise GhnClientError(f"GHN API error path={path} code={payload.get('code')}")
-                return payload
-
-            time.sleep(BACKOFF_BASE_SECONDS * (2**attempt))
+            # Wait before the next attempt, but not after the last one.
+            if retryable and attempt < MAX_RETRIES - 1:
+                delay = BACKOFF_BASE_SECONDS * (2**attempt)
+                logger.info("retrying path=%s in %.1fs", path, delay)
+                time.sleep(delay)
 
         raise GhnClientError(f"GHN API failed after {MAX_RETRIES} attempts path={path}: {last_error}")
 

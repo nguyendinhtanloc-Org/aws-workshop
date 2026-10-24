@@ -2,15 +2,59 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 REQUIRED_FIELDS = ("order_code", "created_at", "status")
 
-STATUS_TIMES = {
-    "pending": "picked_at",
-    "picked": "in_transit_at",
-    "in_transit": "delivered_at",
+# Maps the GHN API's status vocabulary onto the normalised one the
+# warehouse and the dashboards use. Kept here rather than imported from
+# the Ingestor package, because the two packages are deployed as separate
+# Lambda zips and cannot share modules.
+STATUS_NORMALISATION = {
+    "cancel": "cancelled",
+    "pending": "pending",
+    "processing": "picked",
+    "delivering": "in_transit",
+    "delivered": "delivered",
+    "fail": "failed",
+    "return": "returned",
 }
+
+# Numeric fields that must be written as Decimal.
+#
+# boto3's DynamoDB type serializer raises TypeError on Python floats:
+# "Float types are not supported. Use Decimal types instead." The GHN API
+# returns JSON numbers, which json.loads parses as float, so every order
+# with a fractional weight or a fractional lead time would fail the
+# put_item call and never land in the table. Every numeric field is
+# converted to Decimal here, at the single point where the item shape
+# is defined.
+NUMERIC_FIELDS = (
+    "weight",
+    "shipping_fee",
+    "cod_amount",
+    "lead_time_hours",
+    "from_province_id",
+    "from_district_id",
+    "to_province_id",
+    "to_district_id",
+)
+
+
+def _to_decimal(value: Any) -> Any:
+    """Convert a number to Decimal, leaving everything else untouched.
+
+    Ints stay ints (DynamoDB serialises them fine) but they are converted
+    too so that a value arriving as a float-typed int stays exact.
+    """
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, int):
+        return Decimal(value)
+    return value
 
 
 def _parse_ts(value: Any) -> datetime | None:
@@ -53,17 +97,15 @@ def transform_order(order: dict[str, Any]) -> dict[str, Any]:
         "sk": f"{created_at:%Y-%m-%d}",
         "order_code": order["order_code"],
         "order_id": order.get("order_id"),
-        "from_province_id": order.get("from_province_id"),
-        "from_district_id": order.get("from_district_id"),
-        "to_province_id": order.get("to_province_id"),
-        "to_district_id": order.get("to_district_id"),
-        "weight": order.get("weight"),
-        "status": order["status"],
-        "shipping_fee": order.get("shipping_fee"),
-        "cod_amount": order.get("cod_amount"),
+        "status": STATUS_NORMALISATION.get(order["status"], order["status"]),
         "created_at": created_at.isoformat(),
         "delivered_at": delivered_at.isoformat() if delivered_at else None,
-        "lead_time_hours": lead_time_hours,
         "ingested_at": datetime.now(UTC).isoformat(),
     }
+
+    for field in NUMERIC_FIELDS:
+        item[field] = _to_decimal(order.get(field))
+
+    item["lead_time_hours"] = _to_decimal(lead_time_hours)
+
     return item

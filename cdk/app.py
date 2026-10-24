@@ -55,7 +55,8 @@ analytics = AnalyticsStack(
 
 monitoring = MonitoringStack(
     app, f"{project}-{env_name}-monitoring", env=env, base=base,
-    description="CloudWatch dashboards, SNS alerts, budget alarms",
+    ingestion=ingestion, processing=processing,
+    description="CloudWatch dashboards, alarms, SNS alerts, budget",
 )
 
 streaming.add_dependency(base)

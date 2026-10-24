@@ -7,9 +7,56 @@ from __future__ import annotations
 
 from typing import Any
 
-VALID_STATUSES = frozenset(
-    {"pending", "picked", "in_transit", "delivered", "failed", "returned"}
+# GHN's own status vocabulary, plus the normalised values this project
+# uses downstream. The GHN API returns the raw values; the transform
+# layer maps them onto the normalised set.
+GHN_STATUSES = frozenset(
+    {
+        "cancel",
+        "pending",
+        "processing",
+        "delivering",
+        "delivered",
+        "fail",
+        "return",
+    }
 )
+
+# The normalised vocabulary used by the warehouse and the dashboards.
+VALID_STATUSES = frozenset(
+    {
+        "cancelled",
+        "pending",
+        "picked",
+        "in_transit",
+        "delivered",
+        "failed",
+        "returned",
+    }
+)
+
+# Maps a GHN status onto the normalised one. Anything not listed here is
+# rejected rather than silently bucketed.
+STATUS_NORMALISATION = {
+    "cancel": "cancelled",
+    "pending": "pending",
+    "processing": "picked",
+    "delivering": "in_transit",
+    "delivered": "delivered",
+    "fail": "failed",
+    "return": "returned",
+}
+
+
+def normalise_status(status: str) -> str:
+    """Map a GHN status onto the project's normalised status.
+
+    Raises ValueError for an unknown status.
+    """
+    try:
+        return STATUS_NORMALISATION[status]
+    except KeyError:
+        raise ValueError(f"unknown GHN status {status!r}") from None
 
 REQUIRED_ORDER_FIELDS = (
     "order_id",
@@ -35,7 +82,7 @@ def validate_order(order: dict[str, Any]) -> None:
         raise ValidationError(f"order missing required fields: {', '.join(missing)}")
 
     status = order["status"]
-    if status not in VALID_STATUSES:
+    if status not in GHN_STATUSES and status not in VALID_STATUSES:
         raise ValidationError(
             f"order {order.get('order_code')!r} has unknown status {status!r}"
         )

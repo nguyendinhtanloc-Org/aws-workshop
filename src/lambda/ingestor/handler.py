@@ -18,22 +18,34 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
-import boto3
-from botocore.exceptions import ClientError
-
 from ingestor_config import get_config
 from ghn_client import GhnClient, GhnClientError
 from validator import ValidationError, validate_master_data, validate_order
 
 logger = logging.getLogger()
 
-# boto3 clients are created at import time. In AWS the Lambda runtime
-# already provides credentials, so this is safe and cheap.
-s3 = boto3.client("s3")
-kinesis = boto3.client("kinesis")
-
 # Order matters: master data must land before orders that reference it.
 SOURCES = ("master_data", "orders", "shipping_status")
+
+# boto3 clients are created on first use rather than at import time.
+# Importing this module must not require AWS credentials or open a
+# connection - that is what keeps the unit tests and local scripts free
+# of an AWS account.
+_clients: dict[str, Any] = {}
+
+
+def _client(service: str) -> Any:
+    """Return a cached boto3 client for the given service.
+
+    boto3 is imported here rather than at module scope so that importing
+    this module does not require the AWS SDK - which is what lets the
+    unit tests run without it.
+    """
+    if service not in _clients:
+        import boto3
+
+        _clients[service] = boto3.client(service)
+    return _clients[service]
 
 
 def _get_token() -> str:
@@ -42,8 +54,8 @@ def _get_token() -> str:
     if not secret_arn:
         return get_config()["ghn_token"]
     try:
-        resp = boto3.client("secretsmanager").get_secret_value(SecretId=secret_arn)
-    except ClientError as exc:
+        resp = _client("secretsmanager").get_secret_value(SecretId=secret_arn)
+    except Exception as exc:
         raise GhnClientError(f"cannot read secret {secret_arn}: {exc}") from exc
     return json.loads(resp["SecretString"])["token"]
 
@@ -57,7 +69,7 @@ def _write_raw(source: str, payload: list[dict[str, Any]]) -> str:
         ensure_ascii=False,
         default=str,
     )
-    s3.put_object(
+    _client("s3").put_object(
         Bucket=os.environ.get("RAW_BUCKET_NAME", "ghn-analytics-dev-raw"),
         Key=key,
         Body=body.encode("utf-8"),
@@ -79,13 +91,36 @@ def _publish(source: str, records: list[dict[str, Any]]) -> int:
             ensure_ascii=False,
             default=str,
         )
-        kinesis.put_record(
+        _client("kinesis").put_record(
             StreamName=stream_name,
             Data=payload.encode("utf-8"),
             PartitionKey=str(record.get("order_code") or record.get("entity") or sent),
         )
         sent += 1
     return sent
+
+
+def _partition_valid(
+    source: str, records: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split records into (valid, rejected).
+
+    Only the orders source is record-validated; master data and shipping
+    status are validated as a whole.
+    """
+    if source != "orders":
+        return records, []
+
+    good: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for order in records:
+        try:
+            validate_order(order)
+        except ValidationError as exc:
+            rejected.append({"record": order, "reason": str(exc)})
+        else:
+            good.append(order)
+    return good, rejected
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -106,22 +141,40 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 validate_master_data(records)
             elif source == "orders":
                 records = client.fetch_orders()
-                for order in records:
-                    validate_order(order)
             else:
                 records = client.fetch_shipping_status()
-
-            key = _write_raw(source, records)
-            summary["written"][source] = {"count": len(records), "key": key}
-            logger.info("ingested %s records=%s key=%s", source, len(records), key)
         except (GhnClientError, ValidationError) as exc:
+            # A source-level failure (API down, master data incomplete)
+            # affects every record in it, so the whole source is skipped
+            # and retried on the next scheduled run.
             summary["errors"][source] = str(exc)
             logger.error("ingest failed source=%s error=%s", source, exc)
             continue
 
+        # A single bad record must not cost us the whole batch. Records
+        # that fail validation are written to a quarantine prefix and
+        # counted, and the good ones continue.
+        good, rejected = _partition_valid(source, records)
+        if rejected:
+            quarantine_key = _write_raw(f"quarantine/{source}", rejected)
+            summary.setdefault("quarantined", {})[source] = {
+                "count": len(rejected),
+                "key": quarantine_key,
+            }
+            logger.warning(
+                "quarantined %s invalid record(s) source=%s key=%s",
+                len(rejected),
+                source,
+                quarantine_key,
+            )
+
+        key = _write_raw(source, good)
+        summary["written"][source] = {"count": len(good), "key": key}
+        logger.info("ingested %s records=%s key=%s", source, len(good), key)
+
         # Raw is already durable. A publish failure is not data loss.
         try:
-            published = _publish(source, records)
+            published = _publish(source, good)
             summary["published"][source] = published
         except Exception as exc:
             summary["errors"][f"{source}_publish"] = str(exc)

@@ -11,7 +11,8 @@ alternatives that were rejected and why.
 1. Branch off `develop` using `feat/<ticket>-<slug>` or `fix/<ticket>-<slug>`.
 2. Make the change, keeping it small and single-purpose.
 3. Add or update tests. A change without a test is not finished.
-4. Run `make check` locally. This is exactly what CI runs.
+4. Run the checks locally. These are exactly what CI runs:
+   `ruff check src cdk tests scripts && mypy src cdk tests && pytest`
 5. Open a PR against `develop`. Fill in the whole template.
 6. Get one approval. Changes touching `cdk/` need the infra owner's approval.
 7. Merge with squash.
@@ -42,7 +43,7 @@ Scopes used in this repo: `ingestor`, `processor`, `glue`, `infra`, `ci`,
 
 ## Definition of done
 
-- [ ] `make check` passes
+- [ ] `ruff check`, `mypy` and `pytest` all pass
 - [ ] Tests cover the new behaviour, including the failure path
 - [ ] ADR added or updated if a design decision changed
 - [ ] `docs/runbook.md` updated if operators need to know something new

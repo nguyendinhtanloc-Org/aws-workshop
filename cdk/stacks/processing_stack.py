@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack, StackProps
+from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda_destinations as destinations
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
-from constructs.lambda_function import PipelineLambdaFunction
+from cdk_constructs.lambda_function import PipelineLambdaFunction
 from stacks.base_stack import BaseStack
 
 
@@ -44,13 +45,15 @@ class ProcessingStack(Stack):
             environment={
                 "ORDERS_TABLE_NAME": base.orders_table.table_name,
                 "CURATED_BUCKET_NAME": base.curated_bucket.bucket_name,
+                "DLQ_URL": self.processing_dlq.queue_url,
             },
             log_retention=base.log_retention,
         )
 
         base.orders_table.grant_read_write(self.processor)
-        base.raw_bucket.grant_read_write(self.processor)
-        base.curated_bucket.grant_read_write(self.processor)
+        base.raw_bucket.grant_read(self.processor)
+        base.curated_bucket.grant_read(self.processor)
+        self.processing_dlq.grant_send_messages(self.processor)
 
         # --- Trigger: S3 notification on the raw bucket -------------------
         # Processing is event-driven: a new raw order object triggers a run.
