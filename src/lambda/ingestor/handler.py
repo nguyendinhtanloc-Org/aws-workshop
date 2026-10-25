@@ -123,6 +123,17 @@ def _partition_valid(
     return good, rejected
 
 
+def _make_client() -> Any:
+    """Build the API client: the mock when GHN_MOCK is set, else the real one."""
+    if os.environ.get("GHN_MOCK", "").lower() in ("1", "true", "yes"):
+        from mock_source import MockGhnClient
+
+        logger.info("using mock GHN data source")
+        return MockGhnClient()
+
+    return GhnClient(token=_get_token())
+
+
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Fetch each source, write it to S3 raw, and publish it to Kinesis.
 
@@ -131,7 +142,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     source is retried on the next scheduled run.
     """
     logging.getLogger().setLevel(os.environ.get("LOG_LEVEL", "INFO"))
-    client = GhnClient(token=_get_token())
+    client = _make_client()
     summary: dict[str, Any] = {"written": {}, "published": {}, "errors": {}}
 
     for source in SOURCES:

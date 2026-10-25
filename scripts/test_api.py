@@ -30,6 +30,7 @@ except ImportError:
     pass
 
 from ghn_client import GhnClient, GhnClientError  # noqa: E402
+from mock_source import MockGhnClient  # noqa: E402
 
 # Endpoint paths from the GHN API documentation (Appendix A of the
 # proposal). Verify against https://developer.ghn.dev before relying on
@@ -68,7 +69,11 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=2, help="records to print per endpoint")
     args = parser.parse_args()
 
-    client = GhnClient(token=_token())
+    if os.environ.get("GHN_MOCK", "").lower() in ("1", "true", "yes"):
+        print("[GHN_MOCK=1 - showing generated data, not calling the GHN API]")
+        client = MockGhnClient()
+    else:
+        client = GhnClient(token=_token())
     targets = ENDPOINTS if args.endpoint == "all" else {args.endpoint: ENDPOINTS[args.endpoint]}
 
     failures = 0
