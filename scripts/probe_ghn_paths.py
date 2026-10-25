@@ -54,16 +54,27 @@ HOSTS = [
 
 # Candidate prefixes: the API may sit directly on the host, under
 # /shiip/public-api, or under another mount.
-PREFIXES = ["", "/shiip/public-api", "/public-api"]
+PREFIXES = [
+    "/shipecode/api",          # GHN public-API mount seen in merchant docs
+    "/shipecode",
+    "",
+    "/shiip/public-api",
+    "/public-api",
+]
 
 # Candidate route names: REST-style current generation, legacy camelCase
 # names, and both v3/v4. With a valid token, 404 means the route does not
 # exist at that URL and 200 means it does - the first 200 is confirmed.
 ENDPOINT_PATHS = [
+    # short REST names under the /shipecode/api mount
+    "/v1/provinces",
+    "/v1/districts",
+    "/v1/wards",
+    "/v1/shipping-order",
+    "/v1/shipping-order-list",
+    # the generations tried before
     "/client/api/v4/provinces",
     "/client/api/v4/orders",
-    "/api/v4/provinces",
-    "/api/v1/apiv4/provinces",
     "/api/v1/apiv4/getProvinces",
     "/api/v1/apiv3/getProvinces",
     "/provinces",
@@ -135,6 +146,11 @@ def main() -> int:
                     mark = "  <== WORKS"
                 elif status == 401:
                     mark = "  <== auth failing"
+                elif status == 405:
+                    # 405 = the route EXISTS but does not accept GET -
+                    # it needs a POST/PUT body. This is the strongest
+                    # signal that we are at the right place.
+                    mark = "  <== route exists, wrong method (try POST)"
                 else:
                     mark = ""
                 print(f"  host={host.split('//')[1]:32} prefix={prefix or '(none)':18} {path}  HTTP {status} {mark}")
@@ -160,10 +176,12 @@ def main() -> int:
         print("accepted in this environment. Get a key issued for THIS gateway,")
         print("then re-run - the 404s that follow will be about route names.")
     else:
-        print("Auth passed but no route returned data: the route names/prefix above")
-        print("are guesses. Open a GHN docs \"Open endpoint\" page and read the full")
-        print("URL template (host + prefix + path, including any path parameters);")
-        print("pin that into ghn_client.py and probe it with --prefix.")
+        print("Auth passed but no GET route returned data. Two next moves:")
+        print("  1. Any HTTP 405 above means that exact path exists and needs a")
+        print("     POST/PUT body - pin it into ghn_client.py and switch the verb.")
+        print("  2. Open one GHN docs \"Open endpoint\" page and copy the full URL")
+        print("     template (host + mount + path, including any path parameters) -")
+        print("     it is the authoritative answer and beats this search loop.")
     return 0 if hits else 1
 
 
