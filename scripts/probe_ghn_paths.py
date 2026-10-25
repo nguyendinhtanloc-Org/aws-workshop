@@ -65,20 +65,23 @@ PREFIXES = [
 # Candidate route names: REST-style current generation, legacy camelCase
 # names, and both v3/v4. With a valid token, 404 means the route does not
 # exist at that URL and 200 means it does - the first 200 is confirmed.
-ENDPOINT_PATHS = [
-    # short REST names under the /shipecode/api mount
-    "/v1/provinces",
-    "/v1/districts",
-    "/v1/wards",
-    "/v1/shipping-order",
-    "/v1/shipping-order-list",
-    # the generations tried before
+# The routes confirmed from the GHN docs (developer.ghn.dev):
+CONFIRMED_PATHS = [
+    "/master-data/province",
+    "/master-data/district",
+    "/master-data/ward",
+    "/v2/shipping-order/detail",
+]
+# Legacy guesses, kept as a fallback matrix when the confirmed routes
+# unexpectedly 404.
+LEGACY_PATHS = [
     "/client/api/v4/provinces",
     "/client/api/v4/orders",
     "/api/v1/apiv4/getProvinces",
     "/api/v1/apiv3/getProvinces",
     "/provinces",
 ]
+ENDPOINT_PATHS = CONFIRMED_PATHS + LEGACY_PATHS
 
 
 def _creds() -> tuple[str, str]:

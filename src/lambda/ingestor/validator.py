@@ -7,44 +7,82 @@ from __future__ import annotations
 
 from typing import Any
 
-# GHN's own status vocabulary, plus the normalised values this project
-# uses downstream. The GHN API returns the raw values; the transform
-# layer maps them onto the normalised set.
+# GHN's status vocabulary, from the GHN docs' "Order Status Codes" page.
+# GHN returns the raw values; the transform layer maps them onto the
+# normalised set.
 GHN_STATUSES = frozenset(
     {
-        "cancel",
-        "pending",
-        "processing",
+        # pickup phase
+        "ready_to_pick",
+        "picking",
+        "money_collect_picking",
+        "picked",
+        # warehouse / transit phase
+        "storing",
+        "sorting",
+        "transporting",
         "delivering",
+        "money_collect_delivering",
+        # final: delivered
         "delivered",
-        "fail",
+        # delivery-failure / return-to-sender phase
+        "delivery_fail",
+        "waiting_to_return",
         "return",
+        "return_transporting",
+        "return_sorting",
+        "returning",
+        "return_fail",
+        # final: returned
+        "returned",
+        # final: cancelled / abnormal
+        "cancel",
+        "exception",
+        "lost",
+        "damage",
+        "scrap",
     }
 )
 
 # The normalised vocabulary used by the warehouse and the dashboards.
 VALID_STATUSES = frozenset(
     {
-        "cancelled",
         "pending",
         "picked",
         "in_transit",
         "delivered",
         "failed",
         "returned",
+        "cancelled",
     }
 )
 
-# Maps a GHN status onto the normalised one. Anything not listed here is
-# rejected rather than silently bucketed.
+# Maps each GHN status onto the normalised one. Anything not listed
+# here is rejected rather than silently bucketed.
 STATUS_NORMALISATION = {
-    "cancel": "cancelled",
-    "pending": "pending",
-    "processing": "picked",
+    "ready_to_pick": "pending",
+    "picking": "picked",
+    "money_collect_picking": "picked",
+    "picked": "picked",
+    "storing": "in_transit",
+    "sorting": "in_transit",
+    "transporting": "in_transit",
     "delivering": "in_transit",
+    "money_collect_delivering": "in_transit",
     "delivered": "delivered",
-    "fail": "failed",
+    "delivery_fail": "failed",
+    "waiting_to_return": "returned",
     "return": "returned",
+    "return_transporting": "returned",
+    "return_sorting": "returned",
+    "returning": "returned",
+    "return_fail": "failed",
+    "returned": "returned",
+    "cancel": "cancelled",
+    "exception": "failed",
+    "lost": "failed",
+    "damage": "failed",
+    "scrap": "failed",
 }
 
 

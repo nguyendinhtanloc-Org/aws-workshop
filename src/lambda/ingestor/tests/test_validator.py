@@ -65,7 +65,10 @@ def test_empty_master_data_raises():
 
 def test_ghn_native_statuses_are_accepted():
     """The GHN API's own status vocabulary must pass validation."""
-    for status in ("cancel", "pending", "processing", "delivering", "delivered", "fail", "return"):
+    from validator import GHN_STATUSES
+
+    assert len(GHN_STATUSES) >= 20  # the real vocabulary is large
+    for status in GHN_STATUSES:
         validate_order(dict(VALID_ORDER, status=status))
 
 
@@ -82,6 +85,17 @@ def test_genuinely_unknown_status_is_rejected():
 def test_normalise_status_maps_ghn_values():
     from validator import normalise_status
 
+    # Spot-check the mapping table: final states map to final
+    # normalised values, in-flight phases map to in_transit/picked.
+    assert normalise_status("ready_to_pick") == "pending"
+    assert normalise_status("money_collect_picking") == "picked"
+    assert normalise_status("storing") == "in_transit"
     assert normalise_status("delivering") == "in_transit"
-    assert normalise_status("fail") == "failed"
+    assert normalise_status("delivered") == "delivered"
+    assert normalise_status("delivery_fail") == "failed"
+    assert normalise_status("return_fail") == "failed"
+    assert normalise_status("waiting_to_return") == "returned"
+    assert normalise_status("return_transporting") == "returned"
     assert normalise_status("cancel") == "cancelled"
+    assert normalise_status("exception") == "failed"
+    assert normalise_status("scrap") == "failed"

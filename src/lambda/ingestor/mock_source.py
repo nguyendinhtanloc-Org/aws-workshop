@@ -25,14 +25,31 @@ PROVINCES = [
     {"province_id": 44, "province_name": "Đà Nẵng"},
 ]
 
+# GHN's real status values, from the docs' "Order Status Codes" page.
 STATUSES = [
-    "pending",
-    "processing",
+    "ready_to_pick",
+    "picking",
+    "money_collect_picking",
+    "picked",
+    "storing",
+    "sorting",
+    "transporting",
     "delivering",
+    "money_collect_delivering",
     "delivered",
-    "fail",
-    "cancel",
+    "delivery_fail",
+    "waiting_to_return",
     "return",
+    "return_transporting",
+    "return_sorting",
+    "returning",
+    "return_fail",
+    "returned",
+    "cancel",
+    "exception",
+    "lost",
+    "damage",
+    "scrap",
 ]
 
 
@@ -110,8 +127,8 @@ class MockGhnClient:
                 order["delivered_at"] = (
                     created + timedelta(hours=self._rng.randint(6, 72))
                 ).isoformat()
-            elif status == "delivering":
-                # In transit, not yet delivered: no delivered_at.
+            else:
+                # Not yet delivered: no delivered_at.
                 order["delivered_at"] = None
 
             # Deliberate imperfections, so the pipeline's error handling is

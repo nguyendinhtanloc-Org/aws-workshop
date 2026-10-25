@@ -73,12 +73,17 @@ def test_numeric_fields_are_decimal():
 def test_ghn_status_is_normalised():
     """GHN's raw status values map onto the project's vocabulary."""
     cases = {
+        "ready_to_pick": "pending",
+        "picking": "picked",
+        "storing": "in_transit",
+        "transporting": "in_transit",
         "delivering": "in_transit",
-        "fail": "failed",
-        "cancel": "cancelled",
-        "return": "returned",
-        "processing": "picked",
         "delivered": "delivered",
+        "delivery_fail": "failed",
+        "return": "returned",
+        "returning": "returned",
+        "cancel": "cancelled",
+        "lost": "failed",
     }
     for raw, expected in cases.items():
         item = transform_order(dict(BASE, status=raw))

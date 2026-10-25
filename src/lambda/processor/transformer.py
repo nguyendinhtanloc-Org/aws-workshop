@@ -10,15 +10,37 @@ REQUIRED_FIELDS = ("order_code", "created_at", "status")
 # Maps the GHN API's status vocabulary onto the normalised one the
 # warehouse and the dashboards use. Kept here rather than imported from
 # the Ingestor package, because the two packages are deployed as separate
-# Lambda zips and cannot share modules.
+# Lambda zips and cannot share modules. The source vocabulary is from the
+# GHN docs' "Order Status Codes" page.
 STATUS_NORMALISATION = {
-    "cancel": "cancelled",
-    "pending": "pending",
-    "processing": "picked",
+    # pickup phase
+    "ready_to_pick": "pending",
+    "picking": "picked",
+    "money_collect_picking": "picked",
+    "picked": "picked",
+    # warehouse / transit phase
+    "storing": "in_transit",
+    "sorting": "in_transit",
+    "transporting": "in_transit",
     "delivering": "in_transit",
+    "money_collect_delivering": "in_transit",
+    # delivered
     "delivered": "delivered",
-    "fail": "failed",
+    # delivery failure / return-to-sender
+    "delivery_fail": "failed",
+    "waiting_to_return": "returned",
     "return": "returned",
+    "return_transporting": "returned",
+    "return_sorting": "returned",
+    "returning": "returned",
+    "return_fail": "failed",
+    "returned": "returned",
+    # cancelled / abnormal finals
+    "cancel": "cancelled",
+    "exception": "failed",
+    "lost": "failed",
+    "damage": "failed",
+    "scrap": "failed",
 }
 
 # Numeric fields that must be written as Decimal.

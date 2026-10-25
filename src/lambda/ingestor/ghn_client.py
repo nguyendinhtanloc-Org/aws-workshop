@@ -23,13 +23,23 @@ STAGING_BASE_URL = "https://dev-online-gateway.ghn.vn"
 # Path prefix the gateway mounts the public API under. Overridable because
 # GHN has moved it between generations - confirm it from the endpoint
 # URLs in the GHN docs' "Open endpoint" pages.
+# Confirmed from the GHN docs (https://developer.ghn.dev), which show
+# full request URLs of the form:
+#   GET {gateway}/shiip/public-api/master-data/province
+#   GET {gateway}/shiip/public-api/master-data/district
+#   GET {gateway}/shiip/public-api/master-data/ward
+#   GET {gateway}/shiip/public-api/v2/shipping-order/detail
 API_PREFIX = os.environ.get("GHN_API_PREFIX", "/shiip/public-api")
 
+# Endpoint paths, confirmed from the GHN docs. The order route is
+# shipping-order/detail; district and ward may take query parameters
+# (province_id, district_id) - the GHN docs list them as optional
+# filters.
 ENDPOINTS: dict[str, str] = {
-    "provinces": "/client/api/v4/provinces",
-    "districts": "/client/api/v4/districts",
-    "wards": "/client/api/v4/wards",
-    "orders": "/client/api/v4/orders",
+    "provinces": "/master-data/province",
+    "districts": "/master-data/district",
+    "wards": "/master-data/ward",
+    "orders": "/v2/shipping-order/detail",
 }
 TIMEOUT_SECONDS = 15
 MAX_RETRIES = 3
