@@ -113,7 +113,9 @@ def _call(url: str, headers: dict[str, str]) -> tuple[int, str, bool]:
     data = payload.get("data")
     rows = len(data) if isinstance(data, list) else (1 if data else 0)
     detail = f"code={code} rows={rows}"
-    if r.status_code == 401:
+    if r.status_code in (400, 401, 403, 405, 422):
+        # The gateway's own message names the problem: a 400 says which
+        # parameter is missing, a 401 which credential failed.
         message = payload.get("message") or r.text[:120].replace("\n", " ")
         detail = f"code={code} msg={message!r}"
     return r.status_code, detail, usable
@@ -127,7 +129,29 @@ def main() -> int:
         "--prefix", default="",
         help="probe a single specific prefix instead of the full matrix",
     )
+    parser.add_argument(
+        "--urls", default="",
+        help="skip the matrix; probe a comma-separated list of full URLs "
+             "(use this to test ward/order endpoints with their query params)",
+    )
     args = parser.parse_args()
+
+    if args.urls:
+        print(f"=== probing {len(args.urls.split(','))} explicit URL(s) ===")
+        hits = []
+        for raw in args.urls.split(","):
+            url = raw.strip()
+            status, detail, usable = _call(url, _headers(token, shop))
+            mark = "  <== WORKS" if usable else ""
+            print(f"  {url}\n    HTTP {status} {detail}{mark}")
+            if usable:
+                hits.append(url)
+                if args.verbose:
+                    r = requests.get(url, headers=_headers(token, shop), timeout=12)
+                    d = r.json().get("data")
+                    sample = (d[0] if isinstance(d, list) and d else d)
+                    print("    sample:", json.dumps(sample, ensure_ascii=False)[:300])
+        print()
 
     token, shop = _creds()
     hosts = [args.host] if args.host else HOSTS
@@ -156,7 +180,8 @@ def main() -> int:
                     mark = "  <== route exists, wrong method (try POST)"
                 else:
                     mark = ""
-                print(f"  host={host.split('//')[1]:32} prefix={prefix or '(none)':18} {path}  HTTP {status} {mark}")
+                shown = detail if status in (400, 401, 403, 404, 405, 422) else detail
+                print(f"  host={host.split('//')[1]:32} prefix={prefix or '(none)':18} {path}  HTTP {status} {shown}{mark}")
                 if usable:
                     hits.append(url)
                 if status == 401:

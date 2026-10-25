@@ -18,11 +18,29 @@ import random
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+# Master data in the shape the GHN API actually returns (confirmed 200s
+# from /master-data/province and /master-data/district on the dev
+# gateway): PascalCase keys, and a district carries its province.
 PROVINCES = [
-    {"province_id": 79, "province_name": "Hồ Chí Minh"},
-    {"province_id": 20, "province_name": "Hà Nội"},
-    {"province_id": 31, "province_name": "Hải Phòng"},
-    {"province_id": 44, "province_name": "Đà Nẵng"},
+    {"ProvinceID": 79, "ProvinceName": "Hồ Chí Minh", "Code": "44", "CountryID": 1},
+    {"ProvinceID": 20, "ProvinceName": "Hà Nội", "Code": "4", "CountryID": 1},
+    {"ProvinceID": 31, "ProvinceName": "Hải Phòng", "Code": "45", "CountryID": 1},
+    {"ProvinceID": 44, "ProvinceName": "Đà Nẵng", "Code": "29", "CountryID": 1},
+]
+
+DISTRICTS = [
+    {"DistrictID": i, "ProvinceID": p, "DistrictName": n, "DistrictEncode": f"D{i}",
+     "Status": 1, "PickType": 1}
+    for i, p, n in (
+        (2, 20, "Ba Đình"), (3, 20, "Hoàn Kiếm"),
+        (5, 79, "Quận 1"), (6, 79, "Quận 3"),
+        (8, 44, "Hải Châu"), (9, 44, "Thanh Khê"),
+    )
+]
+
+WARDS = [
+    {"WardCode": f"w{i}", "DistrictID": i, "WardName": f"Ward {i}"}
+    for i in (2, 3, 5, 6, 8, 9)
 ]
 
 # GHN's real status values, from the docs' "Order Status Codes" page.
@@ -80,24 +98,21 @@ class MockGhnClient:
         (provinces).
         """
         segment = path.rstrip("/").rsplit("/", 1)[-1].lower()
-        if segment in ("provinces", "getprovinces"):
+        if segment in ("province", "provinces", "getprovinces"):
             return {"code": 200, "data": PROVINCES}
-        if segment in ("districts", "getdistricts"):
-            return {"code": 200, "data": [{"district_id": i, "district_name": f"District {i}"} for i in range(1, 6)]}
-        if segment in ("wards", "getward"):
-            return {"code": 200, "data": [{"ward_code": f"w{i}", "ward_name": f"Ward {i}"} for i in range(1, 6)]}
-        if segment in ("orders", "getorder", "getorderlist"):
+        if segment in ("district", "districts", "getdistricts"):
+            return {"code": 200, "data": DISTRICTS}
+        if segment in ("ward", "wards", "getward"):
+            return {"code": 200, "data": WARDS}
+        if segment in ("detail", "orders", "getorder", "getorderlist"):
             return {"code": 200, "data": self.fetch_orders()}
         raise AssertionError(f"unmocked path {path}")
 
     def fetch_master_data(self) -> list[dict[str, Any]]:
-        """Provinces, districts and wards as one flat record list."""
+        """Provinces, districts and wards as one flat record list, in the
+        real API's PascalCase shape."""
         records: list[dict[str, Any]] = []
-        for entity, items in (
-            ("province", PROVINCES),
-            ("district", [{"district_id": i, "district_name": f"District {i}"} for i in range(1, 6)]),
-            ("ward", [{"ward_code": f"w{i}", "ward_name": f"Ward {i}"} for i in range(1, 6)]),
-        ):
+        for entity, items in (("province", PROVINCES), ("district", DISTRICTS), ("ward", WARDS)):
             for item in items:
                 records.append({"entity": entity, **item})
         return records
