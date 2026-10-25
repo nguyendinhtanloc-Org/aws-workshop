@@ -119,14 +119,24 @@ def main() -> int:
 
     print(f"=== endpoint matrix (host x prefix {args.prefix} x path) ===")
     hits: list[str] = []
+    any401 = False
     for host in hosts:
         for path in ENDPOINT_PATHS:
             url = f"{host}{args.prefix}{path}"
             status, detail, usable = _call(url, _headers(token, shop))
-            mark = "  <== WORKS" if usable else ""
+            if usable:
+                mark = "  <== WORKS"
+            elif status == 401:
+                # A 401 means the router found the route and rejected the
+                # credentials - the URL shape is right, the auth is not.
+                mark = "  <== route exists, auth failing (Token/ShopId)"
+            else:
+                mark = ""
             print(f"  host={host.split('//')[1]} {path}  HTTP {status} {detail}{mark}")
             if usable:
                 hits.append(url)
+            if status == 401:
+                any401 = True
                 if args.verbose:
                     r = requests.get(url, headers=_headers(token, shop), timeout=12)
                     d = r.json().get("data")
@@ -140,6 +150,11 @@ def main() -> int:
             print("  " + h)
         print("\nPin the confirmed paths into ghn_client.py's ENDPOINTS dict, and")
         print("GHN_SHOP_ID (and GHN_API_PREFIX if different) in .env.")
+    elif any401:
+        print("Every route answered 401: the URL shape is right, the credentials")
+        print("are what's failing. Set GHN_SHOP_ID in .env, and check whether your")
+        print("API key was issued for this environment (dev tokens do not work")
+        print("against the production gateway, and vice versa).")
     else:
         print("No path returned data. Likely causes, in order of probability:")
         print("  1. GHN_SHOP_ID is blank - set it; the router needs that header.")
