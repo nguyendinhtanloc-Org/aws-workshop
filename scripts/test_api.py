@@ -60,21 +60,19 @@ def main() -> int:
     args = parser.parse_args()
 
     shop_id = os.environ.get("GHN_SHOP_ID", "")
-    partner_id = os.environ.get("GHN_PARTNER_ID", "")
     base_url = os.environ.get("GHN_BASE_URL", "https://online-gateway.ghn.vn")
 
     if os.environ.get("GHN_MOCK", "").lower() in ("1", "true", "yes"):
         print("[GHN_MOCK=1 - showing generated data, not calling the GHN API]")
         client = MockGhnClient()
     else:
-        if not partner_id:
-            print("[note] GHN_PARTNER_ID is blank - the gateway will 404 "
-                  "every route without it. Set it in .env first.")
+        if not shop_id:
+            print("[note] GHN_SHOP_ID is blank - the gateway requires it "
+                  "alongside the token. Set it in .env first.")
         client = GhnClient(
             token=_token(),
             base_url=base_url,
             shop_id=shop_id,
-            partner_id=partner_id,
         )
     targets = ENDPOINTS if args.endpoint == "all" else {args.endpoint: ENDPOINTS[args.endpoint]}
 

@@ -132,11 +132,16 @@ def _make_client() -> Any:
         return MockGhnClient()
 
     config = get_config()
+    shop_id = config.get("ghn_shop_id", "")
+    if not shop_id:
+        logger.warning(
+            "GHN_SHOP_ID is not set; the current gateway requires it "
+            "alongside the token and may reject every request"
+        )
     return GhnClient(
         token=config["ghn_token"],
         base_url=config["ghn_base_url"],
-        shop_id=config.get("ghn_shop_id", ""),
-        partner_id=config.get("ghn_partner_id", ""),
+        shop_id=shop_id,
     )
 
 

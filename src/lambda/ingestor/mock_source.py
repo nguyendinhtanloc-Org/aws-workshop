@@ -48,13 +48,11 @@ class MockGhnClient:
         token: str = "",
         base_url: str = "",
         shop_id: str = "",
-        partner_id: str = "",
         seed: int | None = 7,
     ) -> None:
         self._token = token
         self._base_url = base_url
         self._shop_id = shop_id
-        self._partner_id = partner_id
         self._rng = random.Random(seed)
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:

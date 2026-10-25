@@ -14,26 +14,17 @@ logger = logging.getLogger(__name__)
 #   production  https://online-gateway.ghn.vn
 #   staging     https://dev-online-gateway.ghn.vn
 #
-# The /shiip/public-api URL in the GHN docs is the documentation
-# portal. The real request URL is
+# Authentication is two headers: Token (API key) and ShopId. Both must be
+# set - the router can reject requests that are missing ShopId with a
+# routing 404.
 #
-#     {gateway}/shiip/public-api/{partner_id}{path}
-#
-# i.e. the partner id is a PATH segment, and requests are also
-# authenticated with two headers: Token and ShopId. Without the
-# partner_id segment the gateway answers every route with
-# {"code":404,"message":"Not Found"} - the routing 404 that every
-# probe so far produced.
 BASE_URL = os.environ.get("GHN_BASE_URL", "https://online-gateway.ghn.vn").rstrip("/")
 STAGING_BASE_URL = "https://dev-online-gateway.ghn.vn"
-API_PREFIX = "/shiip/public-api"
+# Path prefix the gateway mounts the public API under. Overridable because
+# GHN has moved it between generations - confirm it from the endpoint
+# URLs in the GHN docs' "Open endpoint" pages.
+API_PREFIX = os.environ.get("GHN_API_PREFIX", "/shiip/public-api")
 
-# Endpoint paths for the current gateway generation. PROVISIONAL: the
-# GHN docs describe the flows (create order, fee calculation, address
-# sync, webhooks) and the authoritative route list is the gateway's
-# OpenAPI spec. scripts/probe_ghn_paths.py fetches that spec when
-# reachable and prints the real route names - until then, treat this
-# dict as the single place to pin the confirmed paths.
 ENDPOINTS: dict[str, str] = {
     "provinces": "/client/api/v4/provinces",
     "districts": "/client/api/v4/districts",
@@ -77,12 +68,10 @@ class GhnClient:
         token: str,
         base_url: str = BASE_URL,
         shop_id: str = "",
-        partner_id: str = "",
     ) -> None:
         self._token = token
         self._base_url = base_url.rstrip("/")
         self._shop_id = shop_id
-        self._partner_id = partner_id
         self._session = requests.Session()
         self._session.headers.update({"Content-Type": "application/json"})
 
@@ -95,14 +84,8 @@ class GhnClient:
         return headers
 
     def _url_for(self, path: str) -> str:
-        """Full request URL: gateway + API prefix + partner id + path.
-
-        The partner id is a path segment, not a header - requests
-        without it are rejected by the gateway's router with a 404 for
-        every route.
-        """
-        partner = f"/{self._partner_id}" if self._partner_id else ""
-        return f"{self._base_url}{API_PREFIX}{partner}{path}"
+        """Full request URL: gateway host + API prefix + endpoint path."""
+        return f"{self._base_url}{API_PREFIX}{path}"
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """GET an endpoint, retrying transient failures with backoff.

@@ -60,11 +60,9 @@ class IngestionStack(Stack):
             dead_letter_queue=self.ingest_dlq,
             environment={
                 "GHN_SECRET_ARN": self.ghn_secret.secret_arn,
-                # The gateway's auth is two headers, Token and ShopId;
-                # the partner id is a path segment. All three are
-                # overridable per environment.
+                # The gateway's auth is two headers, Token and ShopId.
+                # Overridable per environment.
                 "GHN_SHOP_ID": os.environ.get("GHN_SHOP_ID", ""),
-                "GHN_PARTNER_ID": os.environ.get("GHN_PARTNER_ID", ""),
                 "GHN_BASE_URL": os.environ.get(
                     "GHN_BASE_URL", "https://online-gateway.ghn.vn"
                 ),

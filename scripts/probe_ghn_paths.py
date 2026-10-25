@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Find the working GHN gateway base URL, partner id and endpoint paths.
+"""Find the working GHN gateway endpoint paths.
 
 GHN's current open API (per the docs' "API Environments" table) lives on
 the bare gateway host:
@@ -7,21 +7,19 @@ the bare gateway host:
     production  https://online-gateway.ghn.vn
     staging     https://dev-online-gateway.ghn.vn
 
-Requests carry two auth headers - Token and ShopId - and the partner id
-is a PATH segment:
+Requests are authenticated with two headers - Token (API key) and ShopId.
+The exact endpoint paths for the current generation are not known yet, so
+this script probes the candidate paths read-only and reports which ones
+answer with data, so ghn_client.py's ENDPOINTS can be pinned to the
+working set.
 
-    {gateway}/shiip/public-api/{partner_id}{endpoint}
-
-Without the partner id the gateway answers every route with
-{"code":404}, which is the routing 404 that every earlier probe
-produced. This script tries the candidate combinations read-only and
-prints which one returns data, so ghn_client.py's ENDPOINTS and the
-GHN_PARTNER_ID / GHN_SHOP_ID env vars can be pinned.
+The OpenAPI spec is the authoritative source for the route list; when the
+gateway exposes one, run with --spec to read it.
 
 Usage:
-    python3 scripts/probe_ghn_paths.py            # the full matrix
-    python3 scripts/probe_ghn_paths.py --spec     # fetch the OpenAPI spec
-    python3 scripts/probe_ghn_paths.py -v         # show a sample record
+    python3 scripts/probe_ghn_paths.py           # the path matrix
+    python3 scripts/probe_ghn_paths.py --spec    # fetch the OpenAPI spec
+    python3 scripts/probe_ghn_paths.py -v        # show a sample record
 """
 from __future__ import annotations
 
@@ -45,14 +43,20 @@ HOSTS = [
     "https://online-gateway.ghn.vn",
     "https://dev-online-gateway.ghn.vn",
 ]
-PREFIX = "/shiip/public-api"
+
+# GHN_API_PREFIX is the path prefix the gateway mounts the API under.
+# Overridable because GHN has moved it between generations.
+DEFAULT_PREFIX = os.environ.get("GHN_API_PREFIX", "/shiip/public-api")
+
 ENDPOINT_PATHS = [
     "/client/api/v4/provinces",
     "/client/api/v4/orders",
     "/client/api/v4/districts",
     "/client/api/v4/wards",
+    "/api/v1/apiv4/provinces",
+    "/api/v1/apiv4/orders",
 ]
-SPEC_PATHS = ["/swagger.json", "/openapi.json", "/api-docs", f"{PREFIX}/swagger.json"]
+SPEC_PATHS = ["/swagger.json", "/openapi.json", f"{DEFAULT_PREFIX}/swagger.json", f"{DEFAULT_PREFIX}/openapi.json"]
 
 
 def _creds() -> tuple[str, str]:
@@ -88,16 +92,19 @@ def _call(url: str, headers: dict[str, str]) -> tuple[int, str, bool]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--partner", default=os.environ.get("GHN_PARTNER_ID", ""),
-                        help="partner id path segment (also read from GHN_PARTNER_ID / .env)")
     parser.add_argument("-v", "--verbose", action="store_true", help="print a sample record")
     parser.add_argument("--spec", action="store_true", help="fetch the OpenAPI/swagger spec")
     parser.add_argument("--host", default=None, help="override the gateway host")
+    parser.add_argument("--prefix", default=DEFAULT_PREFIX, help="override the API path prefix")
     args = parser.parse_args()
 
     token, shop = _creds()
     hosts = [args.host] if args.host else HOSTS
-    partners = [args.partner] if args.partner else [args.partner, ""]
+
+    if not shop:
+        print("[note] GHN_SHOP_ID is blank. The current gateway requires the "
+              "ShopId header; every response below may be a routing 404 "
+              "until it is set. Get it from your GHN partner dashboard.\n")
 
     if args.spec:
         print("=== looking for the OpenAPI / swagger spec ===")
@@ -110,37 +117,37 @@ def main() -> int:
                     print(f"  -> spec found at {url}; it lists the real route paths")
         print()
 
-    print("=== endpoint matrix (partner id x path) ===")
+    print(f"=== endpoint matrix (host x prefix {args.prefix} x path) ===")
     hits: list[str] = []
     for host in hosts:
-        for partner in partners:
-            for path in ENDPOINT_PATHS:
-                url = f"{host}{PREFIX}/{partner}{path}" if partner else f"{host}{PREFIX}{path}"
-                status, detail, usable = _call(url, _headers(token, shop))
-                mark = "  <== WORKS" if usable else ""
-                print(f"  host={host.split('//')[1]} partner={partner or '(none)'} {path}  HTTP {status} {detail}{mark}")
-                if usable:
-                    hits.append(url)
-                    if args.verbose:
-                        r = requests.get(url, headers=_headers(token, shop), timeout=12)
-                        d = r.json().get("data")
-                        sample = (d[0] if isinstance(d, list) and d else d)
-                        print("    sample:", json.dumps(sample, ensure_ascii=False)[:200])
+        for path in ENDPOINT_PATHS:
+            url = f"{host}{args.prefix}{path}"
+            status, detail, usable = _call(url, _headers(token, shop))
+            mark = "  <== WORKS" if usable else ""
+            print(f"  host={host.split('//')[1]} {path}  HTTP {status} {detail}{mark}")
+            if usable:
+                hits.append(url)
+                if args.verbose:
+                    r = requests.get(url, headers=_headers(token, shop), timeout=12)
+                    d = r.json().get("data")
+                    sample = (d[0] if isinstance(d, list) and d else d)
+                    print("    sample:", json.dumps(sample, ensure_ascii=False)[:200])
 
     print("\n" + "=" * 70)
     if hits:
         print("Working URLs:")
         for h in hits:
             print("  " + h)
-        print("\nPin these: GHN_PARTNER_ID=<segment>, GHN_SHOP_ID=<id> in .env, and the")
-        print("confirmed paths into ghn_client.py's ENDPOINTS dict.")
+        print("\nPin the confirmed paths into ghn_client.py's ENDPOINTS dict, and")
+        print("GHN_SHOP_ID (and GHN_API_PREFIX if different) in .env.")
     else:
-        print("No combination returned data. Likely causes:")
-        print("  - GHN_SHOP_ID is blank but the gateway requires it. Set it in .env.")
-        print("  - GHN_PARTNER_ID is blank but the gateway needs it as a path segment.")
-        print("    It usually appears in your GHN partner dashboard / API keys page.")
-        print("  - The ENDPOINT_PATHS above are guesses; run with --spec to pull the real")
-        print("    route list from the gateway's OpenAPI spec.")
+        print("No path returned data. Likely causes, in order of probability:")
+        print("  1. GHN_SHOP_ID is blank - set it; the router needs that header.")
+        print("  2. The GHN_API_PREFIX is wrong for this generation - try it with")
+        print("     --prefix '' (no prefix) or another prefix, and check the")
+        print("     endpoint URLs in the GHN docs' 'Open endpoint' pages.")
+        print("  3. The endpoint paths above are guesses; run with --spec to pull")
+        print("     the real route list from the gateway's OpenAPI spec.")
     return 0 if hits else 1
 
 
