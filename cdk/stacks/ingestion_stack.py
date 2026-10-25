@@ -66,6 +66,11 @@ class IngestionStack(Stack):
                 "GHN_BASE_URL": os.environ.get(
                     "GHN_BASE_URL", "https://online-gateway.ghn.vn"
                 ),
+                # The API has no list-orders route: orders are polled
+                # per code from this watchlist, and per-district ward
+                # lookups are bounded by the district id list.
+                "GHN_ORDER_CODES": os.environ.get("GHN_ORDER_CODES", ""),
+                "GHN_WARD_DISTRICTS": os.environ.get("GHN_WARD_DISTRICTS", ""),
                 "RAW_BUCKET_NAME": base.raw_bucket.bucket_name,
                 "KINESIS_STREAM_NAME": streaming.stream.stream_name,
             },

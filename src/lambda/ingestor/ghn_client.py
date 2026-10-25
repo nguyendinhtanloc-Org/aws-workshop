@@ -31,10 +31,14 @@ STAGING_BASE_URL = "https://dev-online-gateway.ghn.vn"
 #   GET {gateway}/shiip/public-api/v2/shipping-order/detail
 API_PREFIX = os.environ.get("GHN_API_PREFIX", "/shiip/public-api")
 
-# Endpoint paths, confirmed from the GHN docs. The order route is
-# shipping-order/detail; district and ward may take query parameters
-# (province_id, district_id) - the GHN docs list them as optional
-# filters.
+# Endpoint paths, confirmed against the live dev gateway:
+#   GET /master-data/province           200
+#   GET /master-data/district           200
+#   GET /master-data/ward?district_id=N 200 (district_id is required)
+#   GET /v2/shipping-order/detail?OrderCode=X (OrderCode is required -
+#   the gateway's 400 validation message names the field)
+# There is no list-orders endpoint in this API generation: orders are
+# fetched by code, and status *changes* are pushed by webhook.
 ENDPOINTS: dict[str, str] = {
     "provinces": "/master-data/province",
     "districts": "/master-data/district",
@@ -153,32 +157,41 @@ class GhnClient:
     # above. The GHN docs deliver order-status changes by webhook
     # rather than a pollable status list, so shipping_status reuses
     # the orders endpoint.
-    def fetch_master_data(self) -> list[dict[str, Any]]:
-        """Return provinces, districts and wards as one flat record list."""
+    def fetch_master_data(
+        self, ward_district_ids: list[int] | None = None
+    ) -> list[dict[str, Any]]:
+        """Return provinces, districts and wards as one flat record list.
+
+        Provinces and districts are fetched in one call each. The ward
+        endpoint requires a district_id, so wards are only fetched for
+        the districts named in ward_district_ids (a bounded, deliberate
+        set - the full district list is too large to fan out over on
+        every scheduled run). When the list is empty no ward records
+        are produced; the master-data validator treats ward as
+        optional.
+        """
         records: list[dict[str, Any]] = []
-        for entity, key in (("province", "provinces"), ("district", "districts"), ("ward", "wards")):
+        for entity, key in (("province", "provinces"), ("district", "districts")):
             payload = self._get(ENDPOINTS[key])
             for item in _as_records(payload):
                 records.append({"entity": entity, **item})
+        for district_id in ward_district_ids or []:
+            payload = self._get(ENDPOINTS["wards"], params={"district_id": district_id})
+            for item in _as_records(payload):
+                records.append({"entity": "ward", **item})
         return records
 
-    def fetch_orders(self) -> list[dict[str, Any]]:
-        """Return the current page of orders.
+    def fetch_orders(self, order_codes: list[str] | None = None) -> list[dict[str, Any]]:
+        """Return the shipping-order detail for each code in the watchlist.
 
-        The API returns orders page by page; this method fetches the
-        first page only. Pagination is added when the demo dataset
-        exceeds one page.
+        The API has no list-orders route: shipping-order/detail is
+        required-OrderCode, so the Ingestor polls a configured seed
+        list (GHN_ORDER_CODES). Each response is a single order detail
+        object (or a list of them - _as_records accepts both).
         """
-        payload = self._get(ENDPOINTS["orders"])
-        return list(_as_records(payload))
-
-    def fetch_shipping_status(self) -> list[dict[str, Any]]:
-        """Return shipping status records.
-
-        Fetched from the orders endpoint; order status in the current
-        generation is nested on each order and also delivered by
-        webhook, not exposed as a separate pollable list.
-        """
-        payload = self._get(ENDPOINTS["orders"], params={"with_status": True})
-        return list(_as_records(payload))
+        records: list[dict[str, Any]] = []
+        for code in order_codes or []:
+            payload = self._get(ENDPOINTS["orders"], params={"OrderCode": code})
+            records.extend(_as_records(payload))
+        return records
 

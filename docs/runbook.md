@@ -28,6 +28,27 @@ aws secretsmanager put-secret-value \
 If ingestion shows zero records for 15 minutes after seeding, restart the
 schedule or invoke the function manually.
 
+## Order watchlist and webhooks
+
+The GHN API has **no list-orders endpoint**: `v2/shipping-order/detail`
+requires an `OrderCode`. The Ingestor therefore polls a watchlist set in
+`GHN_ORDER_CODES` (comma-separated order codes, in the Ingestor Lambda's
+environment or in the Secrets/parameter store you manage them in). To add
+new orders to the poll, append their codes to that list; each scheduled
+run fetches the current detail for every code.
+
+Status *history* is not polled: in production, GHN's **Order Status
+Callback (webhook)** pushes status changes to an HTTPS endpoint. Until a
+webhook receiver is deployed, the Ingestor derives one `shipping_status`
+record per polled order (its current status), so the pipeline keeps the
+three-source contract (`master_data`, `orders`, `shipping_status`). When
+a webhook receiver is added, it writes directly to the raw/curated store
+and the derived records become redundant.
+
+Ward master data is fetched per district (the ward endpoint requires
+`district_id`); `GHN_WARD_DISTRICTS` bounds that lookup to the districts
+worth keeping.
+
 ## Alerts
 
 ### Delivery success rate dropped below 90%

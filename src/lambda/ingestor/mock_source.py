@@ -108,53 +108,72 @@ class MockGhnClient:
             return {"code": 200, "data": self.fetch_orders()}
         raise AssertionError(f"unmocked path {path}")
 
-    def fetch_master_data(self) -> list[dict[str, Any]]:
+    def fetch_master_data(
+        self, ward_district_ids: list[int] | None = None
+    ) -> list[dict[str, Any]]:
         """Provinces, districts and wards as one flat record list, in the
-        real API's PascalCase shape."""
+        real API's PascalCase shape. When ward_district_ids is given,
+        only wards for those districts are included - mirroring the
+        real client's bounded per-district ward lookups."""
         records: list[dict[str, Any]] = []
-        for entity, items in (("province", PROVINCES), ("district", DISTRICTS), ("ward", WARDS)):
+        for entity, items in (("province", PROVINCES), ("district", DISTRICTS)):
             for item in items:
                 records.append({"entity": entity, **item})
+        for district_id in ward_district_ids or []:
+            for ward in WARDS:
+                if ward.get("DistrictID") == district_id:
+                    records.append({"entity": "ward", **ward})
         return records
 
-    def fetch_orders(self, count: int = 12) -> list[dict[str, Any]]:
-        """Generate a batch of orders, some of them deliberately broken."""
-        now = datetime.now(UTC)
-        orders: list[dict[str, Any]] = []
-        for i in range(count):
-            created = now - timedelta(hours=self._rng.randint(1, 72))
-            status = self._rng.choice(STATUSES)
-            order: dict[str, Any] = {
-                "order_id": str(900_000 + i),
-                "order_code": f"GHNMOCK{i:04d}",
-                "from_province_id": self._rng.choice(PROVINCES)["province_id"],
-                "from_district_id": self._rng.randint(1, 5),
-                "to_province_id": self._rng.choice(PROVINCES)["province_id"],
-                "to_district_id": self._rng.randint(1, 5),
-                # GHN's convention is grams, not kilograms.
-                "weight": self._rng.randint(500, 20_000),
-                "status": status,
-                "created_at": created.isoformat(),
-                "shipping_fee": self._rng.randint(20_000, 200_000),
-                "cod_amount": self._rng.randint(0, 3_000_000),
-            }
-            if status == "delivered":
-                order["delivered_at"] = (
-                    created + timedelta(hours=self._rng.randint(6, 72))
-                ).isoformat()
-            else:
-                # Not yet delivered: no delivered_at.
-                order["delivered_at"] = None
+    def fetch_orders(
+        self,
+        order_codes: list[str] | None = None,
+        count: int = 12,
+    ) -> list[dict[str, Any]]:
+        """Generate a batch of orders, some of them deliberately broken.
 
-            # Deliberate imperfections, so the pipeline's error handling is
-            # actually exercised rather than assumed.
-            if i % 7 == 3:
-                order.pop("to_province_id")          # missing required field
-            elif i % 7 == 5:
-                order["status"] = "teleported"        # unknown status
+        When order_codes is given (the real watchlist path), one order
+        is generated per code with that code's value, so the mock
+        behaves like the by-code API the Ingestor polls.
+        """
+        codes = order_codes if order_codes else [f"GHNMOCK{i:04d}" for i in range(count)]
+        return [self._make_order(i, code) for i, code in enumerate(codes)]
 
-            orders.append(order)
-        return orders
+    def _make_order(self, index: int, code: str) -> dict[str, Any]:
+        """Build one mock order record, optionally broken on purpose."""
+        created = datetime.now(UTC) - timedelta(hours=self._rng.randint(1, 72))
+        status = self._rng.choice(STATUSES)
+        order: dict[str, Any] = {
+            "order_id": str(900_000 + index),
+            "order_code": code,
+            # Master data arrives PascalCase from the API; the Ingestor
+            # mapping layer turns it into the internal names.
+            "from_province_id": self._rng.choice(PROVINCES)["ProvinceID"],
+            "from_district_id": self._rng.randint(1, 9),
+            "to_province_id": self._rng.choice(PROVINCES)["ProvinceID"],
+            "to_district_id": self._rng.randint(1, 9),
+            # GHN's convention is grams, not kilograms.
+            "weight": self._rng.randint(500, 20_000),
+            "status": status,
+            "created_at": created.isoformat(),
+            "shipping_fee": self._rng.randint(20_000, 200_000),
+            "cod_amount": self._rng.randint(0, 3_000_000),
+        }
+        if status == "delivered":
+            order["delivered_at"] = (
+                created + timedelta(hours=self._rng.randint(6, 72))
+            ).isoformat()
+        else:
+            # Not yet delivered: no delivered_at.
+            order["delivered_at"] = None
+
+        # Deliberate imperfections, so the pipeline's error handling is
+        # actually exercised rather than assumed.
+        if index % 7 == 3:
+            order.pop("to_province_id")          # missing required field
+        elif index % 7 == 5:
+            order["status"] = "teleported"        # unknown status
+        return order
 
     def fetch_shipping_status(self, count: int = 8) -> list[dict[str, Any]]:
         """Generate shipping status history records."""

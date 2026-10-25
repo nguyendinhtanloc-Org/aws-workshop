@@ -131,12 +131,17 @@ def validate_order(order: dict[str, Any]) -> None:
 
 
 def validate_master_data(records: list[dict[str, Any]]) -> None:
-    """Validate the master data record list as a whole."""
+    """Validate the master data record list as a whole.
+
+    Province and district are required; ward is optional, because the
+    ward endpoint only answers per district and the Ingestor fetches
+    wards for a bounded district list.
+    """
     if not records:
         raise ValidationError("master data is empty")
 
     entities = {r.get("entity") for r in records}
-    missing = {"province", "district", "ward"} - entities
+    missing = {"province", "district"} - entities
     if missing:
         raise ValidationError(f"master data missing entities: {', '.join(sorted(missing))}")
 

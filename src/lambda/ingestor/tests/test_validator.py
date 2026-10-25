@@ -44,9 +44,19 @@ def test_non_dict_raises():
         validate_order(["not", "a", "dict"])  # type: ignore[arg-type]
 
 
-def test_master_data_requires_all_entities():
+def test_master_data_requires_province_and_district():
+    """Province and district are mandatory; ward is optional."""
     with pytest.raises(ValidationError, match="missing entities"):
         validate_master_data([{"entity": "province"}])
+
+
+def test_master_data_accepts_province_and_district_only():
+    """Ward may be absent: the ward lookup is a bounded, per-district call."""
+    records = [
+        {"entity": "province"},
+        {"entity": "district"},
+    ]
+    validate_master_data(records)
 
 
 def test_master_data_accepts_all_entities():

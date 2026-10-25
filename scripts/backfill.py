@@ -34,12 +34,28 @@ def main() -> int:
         "--bucket", default=os.environ.get("RAW_BUCKET_NAME", "ghn-analytics-dev-raw")
     )
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--bucket", default=os.environ.get("RAW_BUCKET_NAME", "ghn-analytics-dev-raw"))
+    parser.add_argument(
+        "--codes", default="",
+        help="comma-separated order codes to backfill (default: GHN_ORDER_CODES)",
+    )
     args = parser.parse_args()
 
     try:
         token = os.environ["GHN_API_TOKEN"]
     except KeyError:
         print("ERROR: set GHN_API_TOKEN (or .env with it)", file=sys.stderr)
+        return 1
+
+    # The GHN API has no list-orders route, so a backfill can only pull
+    # the orders named in the watchlist (GHN_ORDER_CODES env var or the
+    # --codes flag). Without codes there is nothing to backfill - say so
+    # and stop instead of silently writing empty days.
+    codes_arg = getattr(args, "codes", "") or os.environ.get("GHN_ORDER_CODES", "")
+    order_codes = [c.strip() for c in codes_arg.split(",") if c.strip()]
+    if not order_codes:
+        print("No order codes to backfill: set GHN_ORDER_CODES (comma separated) "
+              "or pass --codes. The GHN API cannot list orders.", file=sys.stderr)
         return 1
 
     client = GhnClient(token=token)
@@ -52,11 +68,11 @@ def main() -> int:
         key = f"raw/backfill/orders/{day}.json"
 
         if args.dry_run:
-            print(f"[dry-run] would write {key}")
+            print(f"[dry-run] would write {key} for {len(order_codes)} order code(s)")
             continue
 
         try:
-            records = client.fetch_orders()
+            records = client.fetch_orders(order_codes=order_codes)
         except GhnClientError as exc:
             print(f"ERROR: cannot fetch {day}: {exc}", file=sys.stderr)
             return 1

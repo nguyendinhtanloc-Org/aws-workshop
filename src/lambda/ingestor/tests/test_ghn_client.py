@@ -79,12 +79,49 @@ def test_exhausted_retries_raise():
 
 
 def test_fetch_master_data_flattens_entities():
-    client, _ = _client(
+    """Province + district come from one call each; wards are fetched
+    per district when district ids are supplied."""
+    client, session = _client(
         [
             FakeResponse(200, {"code": 200, "data": [{"province_id": 1}]}),
             FakeResponse(200, {"code": 200, "data": [{"district_id": 2}]}),
             FakeResponse(200, {"code": 200, "data": [{"ward_code": "A"}]}),
         ]
     )
-    records = client.fetch_master_data()
+    records = client.fetch_master_data(ward_district_ids=[2])
     assert [r["entity"] for r in records] == ["province", "district", "ward"]
+    # ward request carried the required district_id param
+    assert session.calls == 3
+
+
+def test_fetch_master_data_without_districts_skips_ward_calls():
+    client, session = _client(
+        [
+            FakeResponse(200, {"code": 200, "data": [{"province_id": 1}]}),
+            FakeResponse(200, {"code": 200, "data": [{"district_id": 2}]}),
+        ]
+    )
+    records = client.fetch_master_data()
+    assert [r["entity"] for r in records] == ["province", "district"]
+    assert session.calls == 2
+
+
+def test_fetch_orders_polls_by_code():
+    """The API has no list-orders route: one call per code, each with
+    the required OrderCode param."""
+    client, _ = _client(
+        [
+            FakeResponse(200, {"code": 200, "data": {"order_code": "C1", "status": "picked"}}),
+            FakeResponse(200, {"code": 200, "data": {"order_code": "C2", "status": "delivered"}}),
+        ]
+    )
+    records = client.fetch_orders(order_codes=["C1", "C2"])
+    assert [r["order_code"] for r in records] == ["C1", "C2"]
+    assert records[0]["status"] == "picked"
+
+
+def test_fetch_orders_without_codes_returns_nothing():
+    """An empty watchlist is a valid run - nothing to fetch."""
+    client, session = _client([])
+    assert client.fetch_orders() == []
+    assert session.calls == 0

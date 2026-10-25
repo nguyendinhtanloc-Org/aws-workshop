@@ -69,6 +69,14 @@ def get_config() -> dict[str, Any]:
         "ghn_token": get_token(),
         "ghn_base_url": os.environ.get("GHN_BASE_URL", "https://online-gateway.ghn.vn"),
         "ghn_shop_id": os.environ.get("GHN_SHOP_ID", ""),
+        # The API has no list-orders route, so the Ingestor polls a
+        # seed watchlist of order codes (comma separated). For a live
+        # shop this watchlist grows as orders are created; status
+        # *changes* themselves arrive by webhook (docs/runbook.md).
+        "ghn_order_codes": os.environ.get("GHN_ORDER_CODES", ""),
+        # The ward endpoint only answers per district, so fetch wards
+        # for this bounded list of district ids only (comma separated).
+        "ghn_ward_district_ids": os.environ.get("GHN_WARD_DISTRICTS", ""),
         "raw_bucket": os.environ.get("RAW_BUCKET_NAME", "ghn-analytics-dev-raw"),
         "kinesis_stream": os.environ.get("KINESIS_STREAM_NAME", ""),
         "log_level": os.environ.get("LOG_LEVEL", "INFO"),

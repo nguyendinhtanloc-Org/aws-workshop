@@ -27,6 +27,10 @@ logger = logging.getLogger()
 # Order matters: master data must land before orders that reference it.
 SOURCES = ("master_data", "orders", "shipping_status")
 
+
+def _split_csv(value: str) -> list[str]:
+    return [item.strip() for item in (value or "").split(",") if item.strip()]
+
 # boto3 clients are created on first use rather than at import time.
 # Importing this module must not require AWS credentials or open a
 # connection - that is what keeps the unit tests and local scripts free
@@ -123,6 +127,10 @@ def _partition_valid(
     return good, rejected
 
 
+def _is_mock() -> bool:
+    return os.environ.get("GHN_MOCK", "").lower() in ("1", "true", "yes")
+
+
 def _make_client() -> Any:
     """Build the API client: the mock when GHN_MOCK is set, else the real one."""
     if os.environ.get("GHN_MOCK", "").lower() in ("1", "true", "yes"):
@@ -130,6 +138,7 @@ def _make_client() -> Any:
 
         logger.info("using mock GHN data source")
         return MockGhnClient()
+
 
     config = get_config()
     shop_id = config.get("ghn_shop_id", "")
@@ -156,15 +165,38 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     client = _make_client()
     summary: dict[str, Any] = {"written": {}, "published": {}, "errors": {}}
 
+    order_codes = _split_csv(os.environ.get("GHN_ORDER_CODES", ""))
+    ward_district_ids = [int(x) for x in _split_csv(os.environ.get("GHN_WARD_DISTRICTS", ""))]
+    _polled_orders: list[dict[str, Any]] = []
+
     for source in SOURCES:
         try:
             if source == "master_data":
-                records = client.fetch_master_data()
+                records = client.fetch_master_data(
+                    ward_district_ids=ward_district_ids or None
+                )
                 validate_master_data(records)
             elif source == "orders":
-                records = client.fetch_orders()
+                records = client.fetch_orders(order_codes=order_codes or None)
+                _polled_orders = records
             else:
-                records = client.fetch_shipping_status()
+                # There is no dedicated status endpoint in this API
+                # generation: each polled order contributes one
+                # current-status record. *Changes* between runs are
+                # delivered by GHN's order-status webhook in
+                # production - see docs/runbook.md.
+                if _is_mock():
+                    records = client.fetch_shipping_status()
+                else:
+                    records = [
+                        {
+                            "order_code": order.get("order_code"),
+                            "status": order.get("status"),
+                            "status_time": order.get("created_at"),
+                            "note": "current status from polled order detail",
+                        }
+                        for order in _polled_orders
+                    ]
         except (GhnClientError, ValidationError) as exc:
             # A source-level failure (API down, master data incomplete)
             # affects every record in it, so the whole source is skipped
