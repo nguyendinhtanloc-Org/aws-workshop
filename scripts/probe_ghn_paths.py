@@ -136,6 +136,13 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    token, shop = _creds()
+    hosts = [args.host] if args.host else HOSTS
+
+    if not shop:
+        print("[note] GHN_SHOP_ID is blank. The current gateway requires the "
+              "ShopId header; every response may be a routing 404 until it is set.\n")
+
     if args.urls:
         print(f"=== probing {len(args.urls.split(','))} explicit URL(s) ===")
         hits = []
@@ -151,14 +158,12 @@ def main() -> int:
                     d = r.json().get("data")
                     sample = (d[0] if isinstance(d, list) and d else d)
                     print("    sample:", json.dumps(sample, ensure_ascii=False)[:300])
-        print()
-
-    token, shop = _creds()
-    hosts = [args.host] if args.host else HOSTS
-
-    if not shop:
-        print("[note] GHN_SHOP_ID is blank. The current gateway requires the "
-              "ShopId header; every response may be a routing 404 until it is set.\n")
+        print("=" * 70)
+        if hits:
+            print("Working URLs:")
+            for h in hits:
+                print("  " + h)
+        return 0 if hits else 1
 
     prefixes = [args.prefix] if args.prefix else PREFIXES
     print(f"=== endpoint matrix: {len(hosts)} host(s) x {len(prefixes)} prefix(es) x {len(ENDPOINT_PATHS)} path(s) ===")
