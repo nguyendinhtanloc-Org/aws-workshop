@@ -87,7 +87,15 @@ def _call(url: str, headers: dict[str, str]) -> tuple[int, str, bool]:
     usable = r.status_code == 200 and code in (200, None)
     data = payload.get("data")
     rows = len(data) if isinstance(data, list) else (1 if data else 0)
-    return r.status_code, f"code={code} rows={rows}", usable
+    detail = f"code={code} rows={rows}"
+    # On a 401 the gateway's own message names the reason ("invalid
+    # token", "shop not registered", ...) - print it plus any auth
+    # challenge headers, since that is what decides the next step.
+    if r.status_code == 401:
+        message = payload.get("message") or r.text[:120].replace("\n", " ")
+        auth = {k: v for k, v in r.headers.items() if "auth" in k.lower()}
+        detail = f"code={code} msg={message!r} {auth or ''}"
+    return r.status_code, detail, usable
 
 
 def main() -> int:
