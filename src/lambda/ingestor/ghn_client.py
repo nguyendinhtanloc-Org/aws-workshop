@@ -10,7 +10,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = os.environ.get("GHN_BASE_URL", "https://api.ghn.vn")
+BASE_URL = os.environ.get("GHN_BASE_URL", "https://online-gateway.ghn.vn/shiip/public-api")
 TIMEOUT_SECONDS = 15
 MAX_RETRIES = 3
 BACKOFF_BASE_SECONDS = 1.0
