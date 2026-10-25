@@ -29,18 +29,8 @@ try:
 except ImportError:
     pass
 
-from ghn_client import GhnClient, GhnClientError  # noqa: E402
+from ghn_client import ENDPOINTS, GhnClient, GhnClientError  # noqa: E402
 from mock_source import MockGhnClient  # noqa: E402
-
-# Endpoint paths from the GHN API documentation (Appendix A of the
-# proposal). Verify against https://developer.ghn.dev before relying on
-# any of them - GHN has changed these paths between API generations.
-ENDPOINTS = {
-    "provinces": "/api/v1/apiv3/getProvinces",
-    "districts": "/api/v1/apiv3/getDistricts",
-    "wards": "/api/v1/apiv3/getWard",
-    "orders": "/api/v1/apiv3/getOrder",
-}
 
 # getTransportCost takes a POST body (from/to address, weight), so it is
 # not probed by this GET-only script. The Ingestor does not use it today;
@@ -69,11 +59,23 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=2, help="records to print per endpoint")
     args = parser.parse_args()
 
+    shop_id = os.environ.get("GHN_SHOP_ID", "")
+    partner_id = os.environ.get("GHN_PARTNER_ID", "")
+    base_url = os.environ.get("GHN_BASE_URL", "https://online-gateway.ghn.vn")
+
     if os.environ.get("GHN_MOCK", "").lower() in ("1", "true", "yes"):
         print("[GHN_MOCK=1 - showing generated data, not calling the GHN API]")
         client = MockGhnClient()
     else:
-        client = GhnClient(token=_token())
+        if not partner_id:
+            print("[note] GHN_PARTNER_ID is blank - the gateway will 404 "
+                  "every route without it. Set it in .env first.")
+        client = GhnClient(
+            token=_token(),
+            base_url=base_url,
+            shop_id=shop_id,
+            partner_id=partner_id,
+        )
     targets = ENDPOINTS if args.endpoint == "all" else {args.endpoint: ENDPOINTS[args.endpoint]}
 
     failures = 0

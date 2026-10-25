@@ -58,14 +58,20 @@ class MockGhnClient:
         self._rng = random.Random(seed)
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Mimic the client's GET interface for the probe script."""
-        if "getProvinces" in path:
+        """Mimic the client's GET interface for the probe script.
+
+        Matches on the last path segment so it works for both the
+        legacy apiv3 names (getProvinces) and the current generation
+        (provinces).
+        """
+        segment = path.rstrip("/").rsplit("/", 1)[-1].lower()
+        if segment in ("provinces", "getprovinces"):
             return {"code": 200, "data": PROVINCES}
-        if "getDistricts" in path:
+        if segment in ("districts", "getdistricts"):
             return {"code": 200, "data": [{"district_id": i, "district_name": f"District {i}"} for i in range(1, 6)]}
-        if "getWard" in path:
+        if segment in ("wards", "getward"):
             return {"code": 200, "data": [{"ward_code": f"w{i}", "ward_name": f"Ward {i}"} for i in range(1, 6)]}
-        if "getOrder" in path:
+        if segment in ("orders", "getorder", "getorderlist"):
             return {"code": 200, "data": self.fetch_orders()}
         raise AssertionError(f"unmocked path {path}")
 
