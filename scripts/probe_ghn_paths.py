@@ -9,17 +9,25 @@ the bare gateway host:
 
 Requests are authenticated with two headers - Token (API key) and ShopId.
 The exact endpoint paths for the current generation are not known yet, so
-this script probes the candidate paths read-only and reports which ones
-answer with data, so ghn_client.py's ENDPOINTS can be pinned to the
-working set.
+this script probes a matrix of candidate prefixes x endpoint names and
+reports which ones answer with data, so ghn_client.py's ENDPOINTS and
+GHN_API_PREFIX can be pinned to the working set.
 
-The OpenAPI spec is the authoritative source for the route list; when the
-gateway exposes one, run with --spec to read it.
+Reading the results:
+
+- Every route answers 401 "Token is not valid!" -> the token is not
+  accepted by this environment; fix the credentials first, the matrix
+  result is meaningless.
+- Auth passes and a route answers 200 -> that URL is a confirmed
+  endpoint; pin it.
+- Auth passes and a route answers 404 -> the gateway has no such route;
+  the route names still need to come from the GHN docs' "Open
+  endpoint" pages, which list the full URL template.
 
 Usage:
-    python3 scripts/probe_ghn_paths.py           # the path matrix
-    python3 scripts/probe_ghn_paths.py --spec    # fetch the OpenAPI spec
-    python3 scripts/probe_ghn_paths.py -v        # show a sample record
+    python3 scripts/probe_ghn_paths.py --host https://dev-online-gateway.ghn.vn
+    python3 scripts/probe_ghn_paths.py --host https://dev-online-gateway.ghn.vn -v
+    python3 scripts/probe_ghn_paths.py --prefix '' --host ...   # skip the full matrix
 """
 from __future__ import annotations
 
@@ -44,19 +52,22 @@ HOSTS = [
     "https://dev-online-gateway.ghn.vn",
 ]
 
-# GHN_API_PREFIX is the path prefix the gateway mounts the API under.
-# Overridable because GHN has moved it between generations.
-DEFAULT_PREFIX = os.environ.get("GHN_API_PREFIX", "/shiip/public-api")
+# Candidate prefixes: the API may sit directly on the host, under
+# /shiip/public-api, or under another mount.
+PREFIXES = ["", "/shiip/public-api", "/public-api"]
 
+# Candidate route names: REST-style current generation, legacy camelCase
+# names, and both v3/v4. With a valid token, 404 means the route does not
+# exist at that URL and 200 means it does - the first 200 is confirmed.
 ENDPOINT_PATHS = [
     "/client/api/v4/provinces",
     "/client/api/v4/orders",
-    "/client/api/v4/districts",
-    "/client/api/v4/wards",
+    "/api/v4/provinces",
     "/api/v1/apiv4/provinces",
-    "/api/v1/apiv4/orders",
+    "/api/v1/apiv4/getProvinces",
+    "/api/v1/apiv3/getProvinces",
+    "/provinces",
 ]
-SPEC_PATHS = ["/swagger.json", "/openapi.json", f"{DEFAULT_PREFIX}/swagger.json", f"{DEFAULT_PREFIX}/openapi.json"]
 
 
 def _creds() -> tuple[str, str]:
@@ -88,22 +99,20 @@ def _call(url: str, headers: dict[str, str]) -> tuple[int, str, bool]:
     data = payload.get("data")
     rows = len(data) if isinstance(data, list) else (1 if data else 0)
     detail = f"code={code} rows={rows}"
-    # On a 401 the gateway's own message names the reason ("invalid
-    # token", "shop not registered", ...) - print it plus any auth
-    # challenge headers, since that is what decides the next step.
     if r.status_code == 401:
         message = payload.get("message") or r.text[:120].replace("\n", " ")
-        auth = {k: v for k, v in r.headers.items() if "auth" in k.lower()}
-        detail = f"code={code} msg={message!r} {auth or ''}"
+        detail = f"code={code} msg={message!r}"
     return r.status_code, detail, usable
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-v", "--verbose", action="store_true", help="print a sample record")
-    parser.add_argument("--spec", action="store_true", help="fetch the OpenAPI/swagger spec")
     parser.add_argument("--host", default=None, help="override the gateway host")
-    parser.add_argument("--prefix", default=DEFAULT_PREFIX, help="override the API path prefix")
+    parser.add_argument(
+        "--prefix", default="",
+        help="probe a single specific prefix instead of the full matrix",
+    )
     args = parser.parse_args()
 
     token, shop = _creds()
@@ -111,41 +120,29 @@ def main() -> int:
 
     if not shop:
         print("[note] GHN_SHOP_ID is blank. The current gateway requires the "
-              "ShopId header; every response below may be a routing 404 "
-              "until it is set. Get it from your GHN partner dashboard.\n")
+              "ShopId header; every response may be a routing 404 until it is set.\n")
 
-    if args.spec:
-        print("=== looking for the OpenAPI / swagger spec ===")
-        for host in hosts:
-            for sp in SPEC_PATHS:
-                url = f"{host}{sp}"
-                status, snippet, _ = _call(url, _headers(token, shop))
-                print(f"  {url}\n    HTTP {status} {snippet[:100]}")
-                if "swagger" in snippet.lower() or "openapi" in snippet.lower():
-                    print(f"  -> spec found at {url}; it lists the real route paths")
-        print()
-
-    print(f"=== endpoint matrix (host x prefix {args.prefix} x path) ===")
+    prefixes = [args.prefix] if args.prefix else PREFIXES
+    print(f"=== endpoint matrix: {len(hosts)} host(s) x {len(prefixes)} prefix(es) x {len(ENDPOINT_PATHS)} path(s) ===")
     hits: list[str] = []
     any401 = False
     for host in hosts:
-        for path in ENDPOINT_PATHS:
-            url = f"{host}{args.prefix}{path}"
-            status, detail, usable = _call(url, _headers(token, shop))
-            if usable:
-                mark = "  <== WORKS"
-            elif status == 401:
-                # A 401 means the router found the route and rejected the
-                # credentials - the URL shape is right, the auth is not.
-                mark = "  <== route exists, auth failing (Token/ShopId)"
-            else:
-                mark = ""
-            print(f"  host={host.split('//')[1]} {path}  HTTP {status} {detail}{mark}")
-            if usable:
-                hits.append(url)
-            if status == 401:
-                any401 = True
-                if args.verbose:
+        for prefix in prefixes:
+            for path in ENDPOINT_PATHS:
+                url = f"{host}{prefix}{path}"
+                status, detail, usable = _call(url, _headers(token, shop))
+                if usable:
+                    mark = "  <== WORKS"
+                elif status == 401:
+                    mark = "  <== auth failing"
+                else:
+                    mark = ""
+                print(f"  host={host.split('//')[1]:32} prefix={prefix or '(none)':18} {path}  HTTP {status} {mark}")
+                if usable:
+                    hits.append(url)
+                if status == 401:
+                    any401 = True
+                if args.verbose and usable:
                     r = requests.get(url, headers=_headers(token, shop), timeout=12)
                     d = r.json().get("data")
                     sample = (d[0] if isinstance(d, list) and d else d)
@@ -156,21 +153,17 @@ def main() -> int:
         print("Working URLs:")
         for h in hits:
             print("  " + h)
-        print("\nPin the confirmed paths into ghn_client.py's ENDPOINTS dict, and")
-        print("GHN_SHOP_ID (and GHN_API_PREFIX if different) in .env.")
+        print("\nPin the confirmed prefix + paths into ghn_client.py (API_PREFIX and")
+        print("ENDPOINTS) and GHN_API_PREFIX / GHN_SHOP_ID in .env.")
     elif any401:
-        print("Every route answered 401: the URL shape is right, the credentials")
-        print("are what's failing. Set GHN_SHOP_ID in .env, and check whether your")
-        print("API key was issued for this environment (dev tokens do not work")
-        print("against the production gateway, and vice versa).")
+        print("Every route answered 401 (\"Token is not valid\"). The token is not")
+        print("accepted in this environment. Get a key issued for THIS gateway,")
+        print("then re-run - the 404s that follow will be about route names.")
     else:
-        print("No path returned data. Likely causes, in order of probability:")
-        print("  1. GHN_SHOP_ID is blank - set it; the router needs that header.")
-        print("  2. The GHN_API_PREFIX is wrong for this generation - try it with")
-        print("     --prefix '' (no prefix) or another prefix, and check the")
-        print("     endpoint URLs in the GHN docs' 'Open endpoint' pages.")
-        print("  3. The endpoint paths above are guesses; run with --spec to pull")
-        print("     the real route list from the gateway's OpenAPI spec.")
+        print("Auth passed but no route returned data: the route names/prefix above")
+        print("are guesses. Open a GHN docs \"Open endpoint\" page and read the full")
+        print("URL template (host + prefix + path, including any path parameters);")
+        print("pin that into ghn_client.py and probe it with --prefix.")
     return 0 if hits else 1
 
 
