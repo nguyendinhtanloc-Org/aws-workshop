@@ -10,7 +10,11 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = os.environ.get("GHN_BASE_URL", "https://online-gateway.ghn.vn/shiip/public-api")
+# Normalise the trailing slash: the gateway 404s every path when a base
+# that ends in "/" is joined with a path that starts in "/".
+BASE_URL = (
+    os.environ.get("GHN_BASE_URL", "https://online-gateway.ghn.vn/shiip/public-api").rstrip("/")
+)
 TIMEOUT_SECONDS = 15
 MAX_RETRIES = 3
 BACKOFF_BASE_SECONDS = 1.0

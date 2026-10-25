@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Find which GHN endpoint paths work with the current base URL.
+"""Find which GHN base URL and endpoint paths actually work.
 
-The GHN API moved to https://online-gateway.ghn.vn/shiip/public-api and
-has changed endpoint paths between generations. This script probes the
-candidate paths read-only and reports which one answers with data, so
-ghn_client.py can be pinned to the working set.
+The GHN open API has changed its host and path layout between
+generations. Every response here comes back as JSON
+{"code":404,"message":"Not Found"}, which is the gateway rejecting the
+route - so we probe a matrix of base prefixes against a matrix of
+endpoint paths and report anything that answers with data.
+
+Read-only. Makes no writes anywhere.
 
 Usage:
-    python3 scripts/probe_ghn_paths.py            # probes everything
-    python3 scripts/probe_ghn_paths.py -v         # show sample payload
+    python3 scripts/probe_ghn_paths.py          # the full matrix
+    python3 scripts/probe_ghn_paths.py -v       # show the first record
+    python3 scripts/probe_ghn_paths.py --quick  # one prefix only
 """
 from __future__ import annotations
 
@@ -28,6 +32,32 @@ try:
 except ImportError:
     pass
 
+# Candidate base prefixes. Ordered most-likely first so a quick run is
+# still useful.
+HOST = "https://online-gateway.ghn.vn"
+PREFIXES = [
+    "/shiip/public-api",
+    "/shiip/public-api/",
+    "",
+    "/public-api",
+    "/shiip",
+    "/gateway",
+    "/api",
+]
+
+# Candidate endpoint paths, tried against every prefix.
+PATHS = [
+    "/api/v1/apiv4/getProvinces",
+    "/api/v1/apiv3/getProvinces",
+    "/v1/api/apiv4/getProvinces",
+    "/api/v1/apiv4/client/orders",
+    "/apiv4/getProvinces",
+    "/getProvinces",
+    "/swagger.json",
+    "/openapi.json",
+    "/",
+]
+
 
 def _token() -> str:
     token = os.environ.get("GHN_API_TOKEN")
@@ -36,73 +66,60 @@ def _token() -> str:
     return token
 
 
+def _probe(url: str, headers: dict[str, str], method: str = "GET") -> tuple[int, str, bool]:
+    """Return (status, snippet, usable)."""
+    try:
+        r = requests.request(method, url, headers=headers, timeout=10)
+    except requests.RequestException as exc:
+        return 0, f"UNREACHABLE ({type(exc).__name__})", False
+    snippet = r.text[:140].replace("\n", " ")
+    try:
+        payload = r.json()
+    except ValueError:
+        return r.status_code, snippet, False
+    code = payload.get("code")
+    usable = r.status_code == 200 and code in (200, None)
+    return r.status_code, f"code={code} {snippet[:100]}", usable
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--base",
-        default=os.environ.get("GHN_BASE_URL", "https://online-gateway.ghn.vn/shiip/public-api"),
-    )
-    parser.add_argument("-v", "--verbose", action="store_true", help="show the first record of any 200 response")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--quick", action="store_true", help="first prefix only")
+    parser.add_argument("--host", default=HOST)
     args = parser.parse_args()
 
     token = _token()
     headers = {"Token": token, "Content-Type": "application/json"}
 
-    # (label, method, path, body). The GHN public API is GET-heavy, but a
-    # few endpoints (order fetch, transport cost) are POST.
-    CANDIDATES = [
-        ("getProvinces", "GET", "/api/v1/apiv3/getProvinces", None),
-        ("getProvinces", "GET", "/api/v1/apiv4/getProvinces", None),
-        ("getDistricts", "GET", "/api/v1/apiv3/getDistricts", None),
-        ("getDistricts", "GET", "/api/v1/apiv4/getDistricts", None),
-        ("getWard", "GET", "/api/v1/apiv3/getWard", None),
-        ("getWardsByDistrict", "GET", "/api/v1/apiv4/getWardsByDistrict", {"district_id": 268}),
-        ("getOrder", "GET", "/api/v1/apiv3/getOrder", None),
-        ("getOrderList", "POST", "/api/v1/apiv4/getOrderList", {"data": {}, "time": 1690000000000, "page_index": 1}),
-        ("getTransportCost", "POST", "/api/v1/apiv4/getTransportCost", {"data": {"from_district_id": 268, "to_district_id": 760, "service_code": "NVX"}}),
-    ]
+    prefixes = PREFIXES[:1] if args.quick else PREFIXES
+    working: list[tuple[str, str]] = []
 
-    print(f"base = {args.base}\n")
-    working: list[str] = []
-    for label, method, path, body in CANDIDATES:
-        url = f"{args.base}{path}"
-        try:
-            if method == "GET":
-                r = requests.get(url, headers=headers, params=body, timeout=10)
-            else:
-                r = requests.post(url, headers=headers, json=body, timeout=10)
-        except requests.RequestException as exc:
-            print(f"  {label:16} {method:3} {path}  UNREACHABLE ({type(exc).__name__})")
-            continue
+    for prefix in prefixes:
+        base = f"{args.host}{prefix}".rstrip("/")
+        print(f"\n=== base {base or args.host} ===")
+        for path in PATHS:
+            status, detail, usable = _probe(f"{base}{path}", headers)
+            flag = "  <== WORKS" if usable else ""
+            print(f"  {path:42} HTTP {status}  {detail}{flag}")
+            if usable:
+                working.append((base, path))
 
-        detail = ""
-        ok = False
-        if r.status_code == 200:
-            try:
-                payload = r.json()
-                code = payload.get("code")
-                ok = code in (200, None)
-                detail = f"code={code} rows={len(payload.get('data') or [])}"
-                if ok and args.verbose:
-                    data = payload.get("data") or []
-                    detail += " first=" + json.dumps(data[0] if isinstance(data, list) and data else (data if data else {}), ensure_ascii=False)[:200]
-            except ValueError:
-                detail = f"non-JSON ({r.headers.get('Content-Type', '?')})"
-        else:
-            detail = r.text[:80].replace("\n", " ")
-
-        print(f"  {label:16} {method:3} {path}  HTTP {r.status_code}  {detail}")
-        if ok:
-            working.append(f"{label}: {method} {path}")
-
-    print()
+    print("\n" + "=" * 70)
     if working:
-        print("Working endpoints:")
-        for w in working:
-            print("  " + w)
-    else:
-        print("No endpoint returned usable data. If every call is 401/403, the token is invalid or belongs to a different API generation.")
-    return 0 if working else 1
+        print("Working combinations:")
+        for base, path in working:
+            print(f"  base={base}\n  path={path}")
+        print("\nPin GHN_BASE_URL to the base above, then map the path into ghn_client.py.")
+        return 0
+
+    print("Nothing worked. Two likely causes:")
+    print("  1. The token is not valid for this API generation (401/403 would show it)")
+    print("     - but every response is a routing 404, so the host/path is the problem.")
+    print("  2. This gateway needs a partner id in the path, e.g. /shiip/public-api/{partner_id}/...")
+    print("\nNext: fetch the GHN developer docs for the exact URL template, or check")
+    print("whether the token in .env is a partner token with a prefix.")
+    return 1
 
 
 if __name__ == "__main__":
