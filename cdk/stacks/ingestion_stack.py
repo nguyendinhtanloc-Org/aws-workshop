@@ -1,6 +1,8 @@
 """Ingestion stack: EventBridge -> Lambda Ingestor -> S3 raw + Kinesis."""
 from __future__ import annotations
 
+import os
+
 from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack, StackProps
 from aws_cdk import aws_events as events
 from aws_cdk import aws_events_targets as targets
@@ -58,6 +60,14 @@ class IngestionStack(Stack):
             dead_letter_queue=self.ingest_dlq,
             environment={
                 "GHN_SECRET_ARN": self.ghn_secret.secret_arn,
+                # The gateway's auth is two headers, Token and ShopId;
+                # the partner id is a path segment. All three are
+                # overridable per environment.
+                "GHN_SHOP_ID": os.environ.get("GHN_SHOP_ID", ""),
+                "GHN_PARTNER_ID": os.environ.get("GHN_PARTNER_ID", ""),
+                "GHN_BASE_URL": os.environ.get(
+                    "GHN_BASE_URL", "https://online-gateway.ghn.vn"
+                ),
                 "RAW_BUCKET_NAME": base.raw_bucket.bucket_name,
                 "KINESIS_STREAM_NAME": streaming.stream.stream_name,
             },

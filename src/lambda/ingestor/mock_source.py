@@ -7,9 +7,10 @@ API returns, so the whole pipeline (ingest -> S3 -> Kinesis -> Lambda ->
 DynamoDB -> Glue -> Athena) can be exercised without it.
 
 The generated data is deliberately imperfect: some records are missing
-required fields, some carry an unknown status, some have a fractional
-weight. That is what exercises the quarantine path, the Decimal
-conversion and the status normalisation in the normal way.
+required fields, some carry an unknown status. That is what exercises
+the quarantine path, the Decimal conversion and the status
+normalisation in the normal way. Weights are integers in grams, per
+GHN's API conventions.
 """
 from __future__ import annotations
 
@@ -42,9 +43,18 @@ class MockGhnClient:
     fetch_orders and fetch_shipping_status.
     """
 
-    def __init__(self, token: str = "", base_url: str = "", seed: int | None = 7) -> None:
+    def __init__(
+        self,
+        token: str = "",
+        base_url: str = "",
+        shop_id: str = "",
+        partner_id: str = "",
+        seed: int | None = 7,
+    ) -> None:
         self._token = token
         self._base_url = base_url
+        self._shop_id = shop_id
+        self._partner_id = partner_id
         self._rng = random.Random(seed)
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -85,7 +95,8 @@ class MockGhnClient:
                 "from_district_id": self._rng.randint(1, 5),
                 "to_province_id": self._rng.choice(PROVINCES)["province_id"],
                 "to_district_id": self._rng.randint(1, 5),
-                "weight": round(self._rng.uniform(0.5, 30.0), 2),
+                # GHN's convention is grams, not kilograms.
+                "weight": self._rng.randint(500, 20_000),
                 "status": status,
                 "created_at": created.isoformat(),
                 "shipping_fee": self._rng.randint(20_000, 200_000),

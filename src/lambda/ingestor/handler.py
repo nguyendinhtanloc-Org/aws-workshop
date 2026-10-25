@@ -131,7 +131,13 @@ def _make_client() -> Any:
         logger.info("using mock GHN data source")
         return MockGhnClient()
 
-    return GhnClient(token=_get_token())
+    config = get_config()
+    return GhnClient(
+        token=config["ghn_token"],
+        base_url=config["ghn_base_url"],
+        shop_id=config.get("ghn_shop_id", ""),
+        partner_id=config.get("ghn_partner_id", ""),
+    )
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:

@@ -75,7 +75,10 @@ def apply_silver_rules(df: DataFrame) -> DataFrame:
         "lead_time_hours",
         F.greatest(F.col("lead_time_hours"), F.lit(0.0)),
     )
-    out = out.withColumn("weight", F.least(F.col("weight").cast("double"), F.lit(1000.0)))
+    # Weight is in grams, per GHN's API conventions. 30 000 g (30 kg)
+    # is the sensible typo-protection ceiling - anything heavier is a
+    # data-entry error, not a parcel.
+    out = out.withColumn("weight", F.least(F.col("weight").cast("double"), F.lit(30_000.0)))
     return out.drop("created_ts", "delivered_ts")
 
 

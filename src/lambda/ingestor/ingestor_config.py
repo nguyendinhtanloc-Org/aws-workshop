@@ -59,9 +59,17 @@ def get_config() -> dict[str, Any]:
 
     Cached because it may perform a Secrets Manager call. Call
     ``get_config.cache_clear()`` if the environment changes mid-process.
+
+    The gateway is the bare GHN host (not the /shiip/public-api docs
+    portal). ``GHN_SHOP_ID`` is the second auth header the current
+    gateway generation requires; it is optional in the mock and in
+    generation v3, where only the token was sent.
     """
     return {
         "ghn_token": get_token(),
+        "ghn_base_url": os.environ.get("GHN_BASE_URL", "https://online-gateway.ghn.vn"),
+        "ghn_shop_id": os.environ.get("GHN_SHOP_ID", ""),
+        "ghn_partner_id": os.environ.get("GHN_PARTNER_ID", ""),
         "raw_bucket": os.environ.get("RAW_BUCKET_NAME", "ghn-analytics-dev-raw"),
         "kinesis_stream": os.environ.get("KINESIS_STREAM_NAME", ""),
         "log_level": os.environ.get("LOG_LEVEL", "INFO"),

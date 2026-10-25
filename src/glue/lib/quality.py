@@ -8,8 +8,12 @@ from __future__ import annotations
 
 from typing import Any
 
+# The normalised status vocabulary the silver layer carries. GHN's raw
+# values (cancel, processing, delivering, fail, return) are mapped onto
+# this set by the transformer, so quality checks run against these
+# names, not the raw ones.
 VALID_STATUSES = frozenset(
-    {"pending", "picked", "in_transit", "delivered", "failed", "returned"}
+    {"pending", "picked", "in_transit", "delivered", "failed", "returned", "cancelled"}
 )
 
 
