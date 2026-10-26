@@ -31,11 +31,19 @@ schedule or invoke the function manually.
 ## Order watchlist and webhooks
 
 The GHN API has **no list-orders endpoint**: `v2/shipping-order/detail`
-requires an `OrderCode`. The Ingestor therefore polls a watchlist set in
-`GHN_ORDER_CODES` (comma-separated order codes, in the Ingestor Lambda's
-environment or in the Secrets/parameter store you manage them in). To add
-new orders to the poll, append their codes to that list; each scheduled
-run fetches the current detail for every code.
+requires an `OrderCode`, and order codes only exist once an order is
+created (`v2/shipping-order/create`). The Ingestor therefore polls a
+watchlist in `GHN_ORDER_CODES` (comma-separated codes, in the Ingestor
+Lambda's environment or wherever you manage that variable).
+
+- **Demo/CI runs:** `python3 scripts/create_demo_order.py` creates test
+  orders through the create route and prints the exact
+  `GHN_ORDER_CODES=...` line to paste into `.env`. Its
+  `client_order_code` is timestamped, so re-running never duplicates an
+  order (GHN returns the previously created code for a reused
+  `client_order_code`).
+- **Live shop runs:** append the shop's real order codes as sales
+  happen; each scheduled run fetches the current detail for every code.
 
 Status *history* is not polled: in production, GHN's **Order Status
 Callback (webhook)** pushes status changes to an HTTPS endpoint. Until a

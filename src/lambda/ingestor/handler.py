@@ -20,6 +20,7 @@ from typing import Any
 
 from ingestor_config import get_config
 from ghn_client import GhnClient, GhnClientError
+from normaliser import normalise_order
 from validator import ValidationError, validate_master_data, validate_order
 
 logger = logging.getLogger()
@@ -177,8 +178,30 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 )
                 validate_master_data(records)
             elif source == "orders":
-                records = client.fetch_orders(order_codes=order_codes or None)
+                raw_records = client.fetch_orders(order_codes=order_codes or None)
+                # GHN-native field names become internal ones here; a
+                # record the normaliser rejects lands in quarantine
+                # below, not in the raw store's good-record set.
+                normalised: list[dict[str, Any]] = []
+                rejected: list[dict[str, Any]] = []
+                for raw in raw_records:
+                    try:
+                        normalised.append(normalise_order(raw))
+                    except ValueError as exc:
+                        rejected.append({"record": raw, "reason": str(exc)})
+                records = normalised
                 _polled_orders = records
+                if rejected:
+                    quarantine_key = _write_raw(f"quarantine/{source}", rejected)
+                    summary.setdefault("quarantined", {})[f"{source}_normalise"] = {
+                        "count": len(rejected),
+                        "key": quarantine_key,
+                    }
+                    logger.warning(
+                        "quarantined %s unnormalisable order record(s) key=%s",
+                        len(rejected),
+                        quarantine_key,
+                    )
             else:
                 # There is no dedicated status endpoint in this API
                 # generation: each polled order contributes one

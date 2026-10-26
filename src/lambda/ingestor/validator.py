@@ -96,11 +96,12 @@ def normalise_status(status: str) -> str:
     except KeyError:
         raise ValueError(f"unknown GHN status {status!r}") from None
 
+# The GHN order detail guarantees order_code, status and a creation
+# timestamp; province/district ids are NOT in the API response (addresses
+# are free text), so they stay optional throughout the warehouse.
+# order_id is optional too: the normaliser falls back to order_code.
 REQUIRED_ORDER_FIELDS = (
-    "order_id",
     "order_code",
-    "from_province_id",
-    "to_province_id",
     "status",
     "created_at",
 )

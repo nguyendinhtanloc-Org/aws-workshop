@@ -44,6 +44,10 @@ ENDPOINTS: dict[str, str] = {
     "districts": "/master-data/district",
     "wards": "/master-data/ward",
     "orders": "/v2/shipping-order/detail",
+    # POST: creates a shipping order. There is no list-orders route, so
+    # the order_code from this response's data field is what the detail
+    # route (orders) is polled with.
+    "create_order": "/v2/shipping-order/create",
 }
 TIMEOUT_SECONDS = 15
 MAX_RETRIES = 3
@@ -101,6 +105,48 @@ class GhnClient:
         """Full request URL: gateway host + API prefix + endpoint path."""
         return f"{self._base_url}{API_PREFIX}{path}"
 
+    def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        """POST a JSON body, with the same retry/backoff policy as _get."""
+        url = self._url_for(path)
+        last_error: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            retryable = False
+            try:
+                resp = self._session.post(
+                    url, headers=self._headers(), json=body, timeout=TIMEOUT_SECONDS
+                )
+            except requests.RequestException as exc:
+                last_error = exc
+                retryable = True
+                logger.warning("request error path=%s attempt=%s error=%s", path, attempt, exc)
+            else:
+                if resp.status_code in (429, 500, 502, 503, 504):
+                    retryable = True
+                    logger.warning("retryable status=%s path=%s attempt=%s", resp.status_code, path, attempt)
+                elif resp.status_code >= 400:
+                    try:
+                        detail = resp.json().get("message") or resp.text[:160]
+                    except ValueError:
+                        detail = resp.text[:160]
+                    raise GhnClientError(f"GHN API error path={path} status={resp.status_code}: {detail}")
+                else:
+                    payload = resp.json()
+                    if payload.get("code") not in (200, None):
+                        raise GhnClientError(f"GHN API error path={path} code={payload.get('code')}")
+                    return payload
+            if retryable and attempt < MAX_RETRIES - 1:
+                time.sleep(BACKOFF_BASE_SECONDS * (2 ** attempt))
+        raise GhnClientError(f"GHN API failed after {MAX_RETRIES} attempts path={path}: {last_error}")
+
+    def create_order(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Create a shipping order; return the response's data object.
+
+        Carries order_code (poll it via the detail route), the fee
+        breakdown and expected_delivery_time.
+        """
+        response = self._post(ENDPOINTS["create_order"], payload)
+        return response.get("data") or {}
+
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """GET an endpoint, retrying transient failures with backoff.
 
@@ -135,7 +181,11 @@ class GhnClient:
                         attempt,
                     )
                 elif resp.status_code >= 400:
-                    raise GhnClientError(f"GHN API error path={path} status={resp.status_code}")
+                    try:
+                        detail = resp.json().get("message") or resp.text[:160]
+                    except ValueError:
+                        detail = resp.text[:160]
+                    raise GhnClientError(f"GHN API error path={path} status={resp.status_code}: {detail}")
                 else:
                     payload = resp.json()
                     if payload.get("code") not in (200, None):

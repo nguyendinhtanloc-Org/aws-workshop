@@ -15,7 +15,14 @@ GHN's API conventions.
 from __future__ import annotations
 
 import random
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+
+try:
+    from datetime import UTC
+except ImportError:  # Python < 3.11
+    from datetime import timezone
+
+    UTC = timezone.utc
 from typing import Any
 
 # Master data in the shape the GHN API actually returns (confirmed 200s
@@ -132,12 +139,65 @@ class MockGhnClient:
     ) -> list[dict[str, Any]]:
         """Generate a batch of orders, some of them deliberately broken.
 
-        When order_codes is given (the real watchlist path), one order
-        is generated per code with that code's value, so the mock
-        behaves like the by-code API the Ingestor polls.
+        When order_codes is given (the real watchlist path), one detail
+        record per code is generated in the GHN detail response's field
+        style (order_code, status, created_date, weight, cod_amount) -
+        the Ingestor normalises those, exactly like the live API path.
         """
-        codes = order_codes if order_codes else [f"GHNMOCK{i:04d}" for i in range(count)]
+        if order_codes:
+            return [
+                self._make_detail(i, code, broken=(i % 7 in (3, 5)))
+                for i, code in enumerate(order_codes)
+            ]
+        codes = [f"GHNMOCK{i:04d}" for i in range(count)]
         return [self._make_order(i, code) for i, code in enumerate(codes)]
+
+    def _make_detail(
+        self, index: int, code: str, broken: bool = False
+    ) -> dict[str, Any]:
+        """A GHN shipping-order detail record (detail-route field names)."""
+        created = datetime.now(UTC) - timedelta(hours=self._rng.randint(1, 72))
+        record: dict[str, Any] = {
+            "order_code": code,
+            "client_order_code": f"SHOP-{code}",
+            "status": self._rng.choice(STATUSES),
+            "created_date": created.isoformat(),
+            "updated_date": created.isoformat(),
+            "weight": self._rng.randint(500, 20_000),
+            "cod_amount": self._rng.randint(0, 3_000_000),
+            "insurance_value": 0,
+            "order_value": 0,
+            "length": 25,
+            "width": 20,
+            "height": 8,
+            "service_type_id": 2,
+            "payment_type_id": 2,
+            "to_name": "Người Nhận Test",
+            "to_phone": "0900000000",
+            "to_address": "Địa chỉ test",
+        }
+        if record["status"] == "delivered":
+            record["delivered_date"] = (
+                created + timedelta(hours=self._rng.randint(6, 72))
+            ).isoformat()
+        if broken:
+            # Deliberate imperfections, so the pipeline's error handling is
+            # actually exercised rather than assumed.
+            if index % 2:
+                record["status"] = "teleported"  # unknown status
+            else:
+                record.pop("order_code")  # missing required field
+        return record
+
+    def create_order(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Mimic the create-order route: assign a code, echo the fee block."""
+        code = f"LADMO{self._rng.randint(100, 999)}"
+        return {
+            "order_code": code,
+            "fee": {"main_service": self._rng.randint(10_000, 40_000), "total": 0},
+            "total_fee": self._rng.randint(10_000, 40_000),
+            "expected_delivery_time": datetime.now(UTC).isoformat(),
+        }
 
     def _make_order(self, index: int, code: str) -> dict[str, Any]:
         """Build one mock order record, optionally broken on purpose."""
