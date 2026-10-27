@@ -25,6 +25,9 @@ from typing import Any
 FIELD_MAP = {
     "created_date": "created_at",
     "updated_date": "updated_at",
+    # The real detail response carries finish_date (null until the order
+    # completes) - the source of the warehouse's delivered_at.
+    "finish_date": "delivered_at",
 }
 
 # Fields copied straight through (same name, same semantics/units).
