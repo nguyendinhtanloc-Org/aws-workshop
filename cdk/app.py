@@ -3,6 +3,20 @@
 from __future__ import annotations
 
 import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+# .env holds the local developer configuration (staging GHN base URL,
+# watchlists, shop id). Real shell exports always win - dotenv only
+# fills in names that are not already set - so CI and explicit
+# `export GHN_...` usage keep full control.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
 
 from aws_cdk import App, Environment, Tags
 
