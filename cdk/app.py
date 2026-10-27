@@ -47,6 +47,12 @@ tags.add("Owner", "de-team")
 # --- Stacks (dependency order) -------------------------------------------
 base = BaseStack(app, f"{project}-{env_name}-base", env=env, description="Shared VPC, S3 buckets, KMS, IAM")
 
+# --minimal: deploy the ingest path only (base + streaming + ingestion +
+# processing - S3, Kinesis, the two Lambdas, DynamoDB). Skip the Glue/
+# Athena analytics stack and the monitoring stack: cheapest way to
+# prove the pipeline end to end; deploy them later with a full run.
+minimal = "--minimal" in sys.argv[1:]
+
 streaming = StreamingStack(
     app, f"{project}-{env_name}-streaming", env=env, base=base,
     description="Kinesis Data Streams + Firehose buffering + S3 curated",
@@ -62,22 +68,22 @@ processing = ProcessingStack(
     description="Lambda processor + DynamoDB + SQS DLQ",
 )
 
-analytics = AnalyticsStack(
-    app, f"{project}-{env_name}-analytics", env=env, base=base,
-    description="Glue Data Catalog + ETL + Athena workgroup",
-)
-
-monitoring = MonitoringStack(
-    app, f"{project}-{env_name}-monitoring", env=env, base=base,
-    ingestion=ingestion, processing=processing,
-    description="CloudWatch dashboards, alarms, SNS alerts, budget",
-)
-
 streaming.add_dependency(base)
 ingestion.add_dependency(base)
 ingestion.add_dependency(streaming)
 processing.add_dependency(base)
-analytics.add_dependency(base)
-monitoring.add_dependency(base)
+
+if not minimal:
+    analytics = AnalyticsStack(
+        app, f"{project}-{env_name}-analytics", env=env, base=base,
+        description="Glue Data Catalog + ETL + Athena workgroup",
+    )
+    monitoring = MonitoringStack(
+        app, f"{project}-{env_name}-monitoring", env=env, base=base,
+        ingestion=ingestion, processing=processing,
+        description="CloudWatch dashboards, alarms, SNS alerts, budget",
+    )
+    analytics.add_dependency(base)
+    monitoring.add_dependency(base)
 
 app.synth()
