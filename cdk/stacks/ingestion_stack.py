@@ -32,10 +32,13 @@ class IngestionStack(Stack):
         # --- Secrets: GHN API token lives in Secrets Manager -------------
         # The value is NOT in this repo; it is seeded into Secrets Manager
         # out of band (see docs/runbook.md -> "Seeding secrets").
+        # Flat name (no slash): hierarchical secret names force a
+        # customer-managed KMS key; the default aws/secretsmanager key
+        # and a plain name keep this stack deployable as-is.
         self.ghn_secret = secretsmanager.Secret(
             self,
             "GhnApiSecret",
-            secret_name=f"{self.stack_name}/ghn-api",
+            secret_name=f"{self.stack_name}-ghn-api",
             description="GHN API token. Seeded out of band, never committed.",
             removal_policy=RemovalPolicy.RETAIN,
         )
@@ -53,7 +56,7 @@ class IngestionStack(Stack):
         self.ingestor = PipelineLambdaFunction(
             self,
             "Ingestor",
-            code_path="src/lambda/ingestor",
+            code_path="build/lambda-ingestor",
             timeout=Duration.minutes(2),
             memory_size=512,
             reserved_concurrent_executions=2,

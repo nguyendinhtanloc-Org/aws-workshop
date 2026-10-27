@@ -21,7 +21,7 @@ The GHN API token is never in the repository. To (re)seed it:
 
 ```bash
 aws secretsmanager put-secret-value \
-  --secret-id ghn-analytics-dev-ingestion/ghn-api \
+  --secret-id ghn-analytics-dev-ingestion-ghn-api \
   --secret-string '{"token":"<token>"}'
 ```
 

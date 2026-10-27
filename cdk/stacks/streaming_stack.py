@@ -1,7 +1,7 @@
 """Streaming stack: Kinesis Data Streams + Firehose -> S3 curated."""
 from __future__ import annotations
 
-from aws_cdk import CfnOutput, Duration, Stack, StackProps
+from aws_cdk import CfnOutput, Duration, Fn, Stack, StackProps
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_kinesis as kinesis
 from aws_cdk import aws_kinesisfirehose as firehose
@@ -90,38 +90,39 @@ class StreamingStack(Stack):
         # silver tables, which is where the schema belongs.
         # (The kinesisfirehose module ships no L2 construct, so this is
         # an L1 definition with its service role wired in above.)
-        self.delivery_stream = firehose.CfnFirehose(
+        self.delivery_stream = firehose.CfnDeliveryStream(
             self,
             "OrdersDeliveryStream",
             delivery_stream_type="KinesisStream",
-            kinesis_stream_source_configuration=firehose.CfnFirehose.KinesisStreamSourceConfigurationProperty(
+            kinesis_stream_source_configuration=firehose.CfnDeliveryStream.KinesisStreamSourceConfigurationProperty(
                 stream_arn=self.stream.stream_arn,
                 role_arn=role.role_arn,
             ),
             # Kinesis-sourced streams only accept the *extended* S3
-            # destination (that is where CompressionType / Format /
-            # ErrorOutputPrefix / KMSKeyArn live; the plain
-            # S3DestinationConfiguration property has none of them).
+            # destination (that is where KmsKeyArn / ErrorOutputPrefix
+            # live; the plain S3DestinationConfiguration has none of
+            # them). Property names are CloudFormation's exact spellings:
+            # CompressionFormat - NOT "CompressionType" - and there is
+            # no separate "Format" property. Records are already JSON
+            # strings, so GZIP only compresses the batch file; Parquet
+            # conversion belongs to Glue, not Firehose.
             extended_s3_destination_configuration=(
-                firehose.CfnFirehose.ExtendedS3DestinationConfigurationProperty(
+                firehose.CfnDeliveryStream.ExtendedS3DestinationConfigurationProperty(
                     bucket_arn=base.curated_bucket.bucket_arn,
                     prefix="curated/orders/",
                     error_output_prefix="curated/errors/",
                     role_arn=role.role_arn,
-                    compression_type="GZIP",
+                    compression_format="GZIP",
                     buffering_size=64,      # MB - flush when the batch hits 64 MB
                     buffering_interval=120,  # or every 2 minutes, whichever first
-                    # Records are JSON strings; NONE = raw delivery, GZIP
-                    # compresses the batch file. PARQUET/ORC would need a
-                    # declared schema - that transform belongs to Glue,
-                    # not to Firehose.
-                    format="NONE",
+                    # KmsKeyArn is a top-level property of the extended
+                    # S3 destination in the CFN schema.
                     kms_key_arn=base.curated_data_key.key_arn,  # SSE-KMS
                 )
             ),
         )
 
-        # L1 CfnFirehose exposes its physical name via CfnRef (no
+        # L1 CfnDeliveryStream exposes its physical name via CfnRef (no
         # .delivery_stream_name property), the Kinesis L2 exposes .stream_name.
-        CfnOutput(self, "DeliveryStreamName", value=self.delivery_stream.ref)
+        CfnOutput(self, "DeliveryStreamName", value=Fn.ref(self.delivery_stream))
         CfnOutput(self, "KinesisStreamName", value=self.stream.stream_name)

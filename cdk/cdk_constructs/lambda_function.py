@@ -7,6 +7,8 @@ once, and there is no per-function drift.
 """
 from __future__ import annotations
 
+import os
+
 from aws_cdk import Duration
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
@@ -32,13 +34,25 @@ class PipelineLambdaFunction(lambda_.Function):
         environment: dict[str, str] | None = None,
         **kwargs: object,
     ) -> None:
+        if not os.path.isdir(os.path.abspath(code_path)):
+            raise RuntimeError(
+                f"Lambda code dir {code_path!r} not found. Run "
+                f"`python3 scripts/build_lambdas.py` before cdk deploy."
+            )
         super().__init__(
             scope,
             construct_id,
             runtime=lambda_.Runtime.PYTHON_3_12,
             architecture=lambda_.Architecture.ARM_64,
             handler=handler,
-            code=lambda_.Code.from_asset(code_path),
+            # code_path must be a *built* package (build/lambda-*),
+            # produced by scripts/build_lambdas.py: the Lambda runtime
+            # has no `requests`, so an unbundled source dir fails on the
+            # very first import.
+            code=lambda_.Code.from_asset(
+                code_path,
+                exclude=["tests", "__pycache__", "*.pyc"],
+            ),
             timeout=timeout,
             memory_size=memory_size,
             reserved_concurrent_executions=reserved_concurrent_executions,

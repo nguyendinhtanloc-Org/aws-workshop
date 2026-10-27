@@ -1,7 +1,10 @@
-"""Base stack: shared VPC, S3 buckets, KMS keys, and log retention.
+"""Base stack: shared data resources (S3, KMS, DynamoDB), optionally a VPC.
 
 Every other stack references resources created here so that encryption,
-logging, and retention policies are defined exactly once.
+logging, and retention policies are defined exactly once. The VPC exists
+only for the Glue analytics stack - everything else in this pipeline
+runs on public endpoints - so minimal deploys set with_vpc=False and
+save the NAT gateway's ~$33/month.
 """
 from __future__ import annotations
 
@@ -17,42 +20,32 @@ from constructs import Construct
 class BaseStack(Stack):
     """Shared infrastructure used by every feature stack."""
 
-    def __init__(self, scope: Construct, construct_id: str, **props: StackProps) -> None:
+    def __init__(
+        self,
+        scope: Construct,
+        construct_id: str,
+        with_vpc: bool = False,
+        **props: StackProps,
+    ) -> None:
         super().__init__(scope, construct_id, **props)
 
-        # --- VPC ---------------------------------------------------------
-        # Nothing in this pipeline runs inside a VPC: the Lambdas call the
-        # GHN API and the AWS APIs directly, and Glue runs in a managed
-        # VPC. A VPC with a NAT gateway would cost ~$33/month - half the
-        # project budget - for nothing.
-        #
-        # The VPC is still created because the Glue ETL jobs need one, and
-        # it uses a single NAT gateway rather than one per AZ.
-        self.vpc = ec2.Vpc(
-            self,
-            "Vpc",
-            max_azs=2,
-            nat_gateways=1,
-            subnet_configuration=[
-                ec2.SubnetConfiguration(
-                    name="public",
-                    subnet_type=ec2.SubnetType.PUBLIC,
-                    cidr_mask=24,
-                ),
-                ec2.SubnetConfiguration(
-                    name="private",
-                    subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS,
-                    cidr_mask=24,
-                ),
-            ],
-        )
+        # --- VPC: only Glue needs one (NAT gateway ~$33/month) -----------
+        self.vpc: ec2.Vpc | None = None
+        if with_vpc:
+            self.vpc = self._create_vpc()
+            CfnOutput(self, "VpcId", value=self.vpc.vpc_id)
 
-        # --- KMS: one key per data domain so we can revoke access per domain
+        # --- KMS: one key per data domain so we can revoke per domain ----
+        # grant_s3_access=True is not optional: with SSE-KMS buckets, the
+        # KMS key's own policy must let S3 encrypt/decrypt, or every
+        # object write fails at runtime with a KMS access error even
+        # though the stack deploys fine.
         self.raw_data_key = kms.Key(
             self,
             "RawDataKey",
             description="Encrypts S3 raw landing zone objects",
             enable_key_rotation=True,
+            grant_s3_access=True,
             removal_policy=RemovalPolicy.RETAIN,
         )
         self.curated_data_key = kms.Key(
@@ -60,6 +53,7 @@ class BaseStack(Stack):
             "CuratedDataKey",
             description="Encrypts S3 curated / analytics objects",
             enable_key_rotation=True,
+            grant_s3_access=True,
             removal_policy=RemovalPolicy.RETAIN,
         )
 
@@ -146,4 +140,24 @@ class BaseStack(Stack):
         CfnOutput(self, "CuratedBucketName", value=self.curated_bucket.bucket_name)
         CfnOutput(self, "AthenaResultsBucketName", value=self.athena_results_bucket.bucket_name)
         CfnOutput(self, "OrdersTableName", value=self.orders_table.table_name)
-        CfnOutput(self, "VpcId", value=self.vpc.vpc_id)
+
+    def _create_vpc(self) -> ec2.Vpc:
+        """One NAT gateway, public + private-with-egress in two AZs."""
+        return ec2.Vpc(
+            self,
+            "Vpc",
+            max_azs=2,
+            nat_gateways=1,
+            subnet_configuration=[
+                ec2.SubnetConfiguration(
+                    name="public",
+                    subnet_type=ec2.SubnetType.PUBLIC,
+                    cidr_mask=24,
+                ),
+                ec2.SubnetConfiguration(
+                    name="private",
+                    subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS,
+                    cidr_mask=24,
+                ),
+            ],
+        )

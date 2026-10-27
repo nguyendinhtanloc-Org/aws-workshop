@@ -37,7 +37,7 @@ class ProcessingStack(Stack):
         self.processor = PipelineLambdaFunction(
             self,
             "Processor",
-            code_path="src/lambda/processor",
+            code_path="build/lambda-processor",
             timeout=Duration.minutes(2),
             memory_size=1024,
             reserved_concurrent_executions=5,

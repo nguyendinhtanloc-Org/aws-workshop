@@ -45,13 +45,15 @@ tags.add("ManagedBy", "cdk")
 tags.add("Owner", "de-team")
 
 # --- Stacks (dependency order) -------------------------------------------
-base = BaseStack(app, f"{project}-{env_name}-base", env=env, description="Shared VPC, S3 buckets, KMS, IAM")
-
 # --minimal: deploy the ingest path only (base + streaming + ingestion +
 # processing - S3, Kinesis, the two Lambdas, DynamoDB). Skip the Glue/
 # Athena analytics stack and the monitoring stack: cheapest way to
 # prove the pipeline end to end; deploy them later with a full run.
 minimal = "--minimal" in sys.argv[1:]
+
+# The VPC (with its NAT gateway, ~$33/mo) only exists when the Glue
+# analytics stack is deployed; minimal deploys skip it entirely.
+base = BaseStack(app, f"{project}-{env_name}-base", with_vpc=not minimal, env=env, description="Shared S3 buckets, KMS, IAM (+ VPC with the analytics stack)")
 
 streaming = StreamingStack(
     app, f"{project}-{env_name}-streaming", env=env, base=base,
