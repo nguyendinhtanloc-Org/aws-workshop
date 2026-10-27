@@ -35,8 +35,9 @@ API_PREFIX = os.environ.get("GHN_API_PREFIX", "/shiip/public-api")
 #   GET /master-data/province           200
 #   GET /master-data/district           200
 #   GET /master-data/ward?district_id=N 200 (district_id is required)
-#   GET /v2/shipping-order/detail?OrderCode=X (OrderCode is required -
-#   the gateway's 400 validation message names the field)
+#   GET /v2/shipping-order/detail?order_code=X 200 (query param is
+#   snake_case, confirmed live; the gateway's 400 message shows the Go
+#   struct name "OrderCode" but that is not the param name)
 # There is no list-orders endpoint in this API generation: orders are
 # fetched by code, and status *changes* are pushed by webhook.
 ENDPOINTS: dict[str, str] = {
@@ -235,13 +236,13 @@ class GhnClient:
         """Return the shipping-order detail for each code in the watchlist.
 
         The API has no list-orders route: shipping-order/detail is
-        required-OrderCode, so the Ingestor polls a configured seed
+        required order_code query param, so the Ingestor polls a configured seed
         list (GHN_ORDER_CODES). Each response is a single order detail
         object (or a list of them - _as_records accepts both).
         """
         records: list[dict[str, Any]] = []
         for code in order_codes or []:
-            payload = self._get(ENDPOINTS["orders"], params={"OrderCode": code})
+            payload = self._get(ENDPOINTS["orders"], params={"order_code": code})
             records.extend(_as_records(payload))
         return records
 

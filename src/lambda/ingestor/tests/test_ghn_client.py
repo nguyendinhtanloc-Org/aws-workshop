@@ -25,6 +25,8 @@ class FakeSession:
 
     def get(self, url: str, headers: dict, params: dict | None = None, timeout: int = 0):
         self.calls += 1
+        self.last_params = params or {}
+        self.last_url = url
         return self._responses.pop(0)
 
 
@@ -108,8 +110,8 @@ def test_fetch_master_data_without_districts_skips_ward_calls():
 
 def test_fetch_orders_polls_by_code():
     """The API has no list-orders route: one call per code, each with
-    the required OrderCode param."""
-    client, _ = _client(
+    the required order_code query param (snake_case, confirmed live)."""
+    client, session = _client(
         [
             FakeResponse(200, {"code": 200, "data": {"order_code": "C1", "status": "picked"}}),
             FakeResponse(200, {"code": 200, "data": {"order_code": "C2", "status": "delivered"}}),
@@ -118,6 +120,8 @@ def test_fetch_orders_polls_by_code():
     records = client.fetch_orders(order_codes=["C1", "C2"])
     assert [r["order_code"] for r in records] == ["C1", "C2"]
     assert records[0]["status"] == "picked"
+    # the confirmed live param name is snake_case, not the Go struct name
+    assert session.last_params == {"order_code": "C2"}
 
 
 def test_fetch_orders_without_codes_returns_nothing():
