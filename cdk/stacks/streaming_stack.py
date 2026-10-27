@@ -54,9 +54,7 @@ class StreamingStack(Stack):
                     "kinesis:ListShards",
                     "kinesis:ListShardsForStream",
                     "kinesis:SubscribeToShard",
-                    "kinesis:SubscribeToShardConsumer",
                     "kinesis:ListStreamConsumers",
-                    "kinesis:CreateSignedUrlWithToken",
                 ],
                 resources=[self.stream.stream_arn],
             ),
@@ -73,6 +71,7 @@ class StreamingStack(Stack):
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=[
+                    "kms:Encrypt",
                     "kms:Decrypt",
                     "kms:GenerateDataKey",
                     "kms:DescribeKey",
@@ -99,8 +98,12 @@ class StreamingStack(Stack):
                 stream_arn=self.stream.stream_arn,
                 role_arn=role.role_arn,
             ),
-            destination=firehose.CfnFirehose.DestinationProperty(
-                s3_destination_configuration=firehose.CfnFirehose.S3DestinationConfigurationProperty(
+            # Kinesis-sourced streams only accept the *extended* S3
+            # destination (that is where CompressionType / Format /
+            # ErrorOutputPrefix / KMSKeyArn live; the plain
+            # S3DestinationConfiguration property has none of them).
+            extended_s3_destination_configuration=(
+                firehose.CfnFirehose.ExtendedS3DestinationConfigurationProperty(
                     bucket_arn=base.curated_bucket.bucket_arn,
                     prefix="curated/orders/",
                     error_output_prefix="curated/errors/",
@@ -108,11 +111,13 @@ class StreamingStack(Stack):
                     compression_type="GZIP",
                     buffering_size=64,      # MB - flush when the batch hits 64 MB
                     buffering_interval=120,  # or every 2 minutes, whichever first
-                    format="JSON",
-                    encryption_configuration=firehose.CfnFirehose.EncryptionConfigurationProperty(
-                        kms_key_arn=base.curated_data_key.key_arn
-                    ),
-                ),
+                    # Records are JSON strings; NONE = raw delivery, GZIP
+                    # compresses the batch file. PARQUET/ORC would need a
+                    # declared schema - that transform belongs to Glue,
+                    # not to Firehose.
+                    format="NONE",
+                    kms_key_arn=base.curated_data_key.key_arn,  # SSE-KMS
+                )
             ),
         )
 
