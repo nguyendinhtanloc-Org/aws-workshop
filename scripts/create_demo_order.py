@@ -73,6 +73,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--count", type=int, default=1, help="how many orders to create")
     parser.add_argument("--dry-run", action="store_true", help="print the payload without calling the API")
+    parser.add_argument(
+        "--host",
+        default=None,
+        help="override GHN_BASE_URL (staging tokens need https://dev-online-gateway.ghn.vn)",
+    )
     args = parser.parse_args()
 
     if args.dry_run:
@@ -81,10 +86,11 @@ def main() -> int:
 
     token = os.environ.get("GHN_API_TOKEN", "")
     shop = os.environ.get("GHN_SHOP_ID", "")
-    base = os.environ.get("GHN_BASE_URL", "https://online-gateway.ghn.vn")
+    base = args.host or os.environ.get("GHN_BASE_URL", "https://online-gateway.ghn.vn")
     if not token or not shop:
         print("ERROR: set GHN_API_TOKEN and GHN_SHOP_ID in .env", file=sys.stderr)
         return 1
+    print(f"target: {base} (shop {shop}) - staging tokens need the dev gateway")
 
     client = GhnClient(token=token, base_url=base, shop_id=shop)
     created: list[str] = []
