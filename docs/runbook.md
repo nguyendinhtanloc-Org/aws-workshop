@@ -146,15 +146,18 @@ python scripts/backfill.py --source orders --days 7
 ## Deploying a change
 
 ```bash
-ruff check src cdk tests scripts && mypy src cdk tests && pytest
-cdk diff --app "python cdk/app.py"        # see what will change
-cdk deploy --all --app "python cdk/app.py"
+ruff check src cdk tests scripts && mypy src cdk tests && python3 run_tests.py
+python3 scripts/build_lambdas.py          # bake pip deps into build/lambda-*
+cdk diff --app "python cdk/app.py --minimal"   # review (minimal: skip Glue/Athena/monitoring, saves ~$33/mo NAT)
+cdk deploy --all --app "python cdk/app.py --minimal" --require-approval never
 ```
 
+Drop `--minimal` to include the analytics (Glue + Athena) and monitoring stacks.
 To roll back a bad deploy: `cdk deploy --all --app "python cdk/app.py"` after
 reverting the commit, or use the CloudFormation console's rollback action.
 Raw and curated data are not destroyed by a stack rollback (both buckets use
-RETAIN policy).
+RETAIN policy). The GHN secret and DynamoDB table also use RETAIN; delete the
+secret manually after `cdk destroy` so the token is actually gone.
 
 ## Idempotency check
 
