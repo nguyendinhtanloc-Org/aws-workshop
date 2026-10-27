@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from aws_cdk import CfnOutput, Duration, Stack, StackProps
-from aws_cdk import aws_kinesisfirehose as firehose
+from aws_cdk import aws_iam as iam
 from aws_cdk import aws_kinesis as kinesis
+from aws_cdk import aws_kinesisfirehose as firehose
 from constructs import Construct
 
 from stacks.base_stack import BaseStack
@@ -35,32 +36,87 @@ class StreamingStack(Stack):
             encryption_key=base.curated_data_key,
         )
 
-        # --- Firehose: buffers, compresses, writes Parquet to S3 curated
-        self.delivery_stream = firehose.DeliveryStream(
+        # --- Firehose service role: read Kinesis, write S3, use KMS ------
+        # The Firehose L1 construct manages the stream itself; the role is
+        # what it uses to read the source and write the destination.
+        role = iam.Role(
             self,
-            "OrdersDeliveryStream",
-            source=firehose.KinesisStreamSource(stream=self.stream),
-            # JSON, not Parquet. The stream carries three different record
-            # shapes (orders, master data, shipping status) and Firehose's
-            # Parquet conversion needs one schema for the whole batch -
-            # mixed shapes fail conversion and land in the error prefix.
-            # Glue reads this JSON layer and writes the typed Parquet
-            # silver tables, which is where the schema belongs.
-            destination=firehose.S3Bucket(
-                base.curated_bucket,
-                "curated/",
-                encryption_key=base.curated_data_key,
-                compression=firehose.Compression.GZIP,
-                format=firehose.Format.JSON,
-                data_output_prefix="orders/",
-                error_output_prefix="errors/",
-                file_suffix="",
+            "FirehoseRole",
+            assumed_by=iam.ServicePrincipal("firehose.amazonaws.com"),
+            description="Service role for the Firehose delivery stream",
+        )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "kinesis:DescribeStream",
+                    "kinesis:DescribeStreamSummary",
+                    "kinesis:GetRecords",
+                    "kinesis:ListShards",
+                    "kinesis:ListShardsForStream",
+                    "kinesis:SubscribeToShard",
+                    "kinesis:SubscribeToShardConsumer",
+                    "kinesis:ListStreamConsumers",
+                    "kinesis:CreateSignedUrlWithToken",
+                ],
+                resources=[self.stream.stream_arn],
             ),
-            source_buffer_interval=Duration.seconds(60),
-            source_buffer_size=firehose.BufferSize.MB_5,
-            buffering_size=firehose.BufferSize.MB_64,
-            buffering_interval=Duration.minutes(2),
+        )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["s3:PutObject", "s3:AbortMultipartUpload", "s3:ListBucket"],
+                resources=[
+                    base.curated_bucket.bucket_arn,
+                    base.curated_bucket.bucket_arn + "/*",
+                ],
+            ),
+        )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "kms:Decrypt",
+                    "kms:GenerateDataKey",
+                    "kms:DescribeKey",
+                    "kms:CreateGrant",
+                ],
+                resources=[base.curated_data_key.key_arn],
+            ),
         )
 
-        CfnOutput(self, "DeliveryStreamName", value=self.delivery_stream.delivery_stream_name)
+        # --- Firehose: buffers, compresses, writes to S3 curated ----------
+        # JSON, not Parquet. The stream carries three different record
+        # shapes (orders, master data, shipping status) and Firehose's
+        # Parquet conversion needs one schema for the whole batch -
+        # mixed shapes fail conversion and land in the error prefix.
+        # Glue reads this JSON layer and writes the typed Parquet
+        # silver tables, which is where the schema belongs.
+        # (The kinesisfirehose module ships no L2 construct, so this is
+        # an L1 definition with its service role wired in above.)
+        self.delivery_stream = firehose.CfnFirehose(
+            self,
+            "OrdersDeliveryStream",
+            delivery_stream_type="KinesisStream",
+            kinesis_stream_source_configuration=firehose.CfnFirehose.KinesisStreamSourceConfigurationProperty(
+                stream_arn=self.stream.stream_arn,
+                role_arn=role.role_arn,
+            ),
+            destination=firehose.CfnFirehose.DestinationProperty(
+                s3_destination_configuration=firehose.CfnFirehose.S3DestinationConfigurationProperty(
+                    bucket_arn=base.curated_bucket.bucket_arn,
+                    prefix="curated/orders/",
+                    error_output_prefix="curated/errors/",
+                    role_arn=role.role_arn,
+                    compression_type="GZIP",
+                    buffering_size=64,      # MB - flush when the batch hits 64 MB
+                    buffering_interval=120,  # or every 2 minutes, whichever first
+                    format="JSON",
+                    encryption_configuration=firehose.CfnFirehose.EncryptionConfigurationProperty(
+                        kms_key_arn=base.curated_data_key.key_arn
+                    ),
+                ),
+            ),
+        )
+
+        # L1 CfnFirehose exposes its physical name via CfnRef (no
+        # .delivery_stream_name property), the Kinesis L2 exposes .stream_name.
+        CfnOutput(self, "DeliveryStreamName", value=self.delivery_stream.ref)
         CfnOutput(self, "KinesisStreamName", value=self.stream.stream_name)
