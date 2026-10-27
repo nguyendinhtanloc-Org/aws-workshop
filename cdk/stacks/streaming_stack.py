@@ -22,10 +22,14 @@ class StreamingStack(Stack):
         super().__init__(scope, construct_id, **props)
 
         # --- Kinesis Data Streams: decouples ingest rate from delivery rate
+        # One shard: at the Ingestor's volume (scheduled runs writing a few
+        # dozen records each) that is ample, and it halves the stream's
+        # fixed hourly cost. If throughput ever outgrows it, raise the
+        # count and cdk deploy will auto-reshard (a 15-minute freeze).
         self.stream = kinesis.Stream(
             self,
             "OrdersStream",
-            shard_count=2,
+            shard_count=1,
             retention_period=Duration.hours(24),
             encryption=kinesis.StreamEncryption.KMS,
             encryption_key=base.curated_data_key,
