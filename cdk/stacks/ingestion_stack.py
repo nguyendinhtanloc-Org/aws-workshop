@@ -103,7 +103,9 @@ class IngestionStack(Stack):
         self.master_data_schedule = events.Rule(
             self,
             "MasterDataSchedule",
-            schedule=events.Schedule.cron(hour=2, minute=0),
+            # Values are strings: this CDK version's cron helper type-checks
+            # against str (not int).
+            schedule=events.Schedule.cron(hour="2", minute="0"),
             description="Daily refresh of provinces, districts, wards",
         )
         self.master_data_schedule.add_target(targets.LambdaFunction(self.ingestor))

@@ -1,9 +1,8 @@
 """Analytics stack: Glue Data Catalog, ETL jobs, Athena workgroup."""
 from __future__ import annotations
 
-from aws_cdk import CfnOutput, Duration, Stack, StackProps
+from aws_cdk import CfnOutput, Duration, Fn, Stack, StackProps
 from aws_cdk import aws_athena as athena
-from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_events as events
 from aws_cdk import aws_events_targets as targets
 from aws_cdk import aws_glue as glue
@@ -29,9 +28,12 @@ class AnalyticsStack(Stack):
         super().__init__(scope, construct_id, **props)
 
         # --- Glue database -------------------------------------------------
+        # catalog_id is the AWS account id; the pseudo-parameter keeps this
+        # region/account agnostic at synth time.
         self.database = glue.CfnDatabase(
             self,
             "AnalyticsDatabase",
+            catalog_id=Fn.ref("AWS::AccountId"),
             database_input=glue.CfnDatabase.DatabaseInputProperty(
                 name="ghn_analytics",
                 description="GHN logistics analytics - curated and aggregate layers",
@@ -90,36 +92,16 @@ class AnalyticsStack(Stack):
             )
         )
 
-        # --- Glue runs in the VPC -----------------------------------------
-        # The job needs ENI permissions to create network interfaces in the
-        # private subnets, and a security group that allows egress.
-        job_role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "ec2:CreateNetworkInterface",
-                    "ec2:DescribeNetworkInterfaces",
-                    "ec2:DeleteNetworkInterface",
-                    "ec2:AssignPrivateIpAddresses",
-                    "ec2:UnassignPrivateIpAddresses",
-                ],
-                resources="*",
-            )
-        )
-
-        glue_security_group = ec2.SecurityGroup(
-            self,
-            "GlueSecurityGroup",
-            vpc=base.vpc,
-            description="Glue ETL jobs: outbound access to the GHN API and S3",
-            allow_all_outbound=True,
-        )
-
-        glue_subnets = [
-            subnet
-            for subnet in base.vpc.private_subnets
-        ] or base.vpc.select_subnets(
-            subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
-        )
+        # --- Glue ETL jobs run on Glue's public infrastructure -----------
+        # The ETL jobs only read from and write to S3 (S3 -> S3 curation)
+        # - they never call the GHN API - so they do not need a VPC or NAT.
+        # A VPC can be re-added later only if a job ever needs private
+        # egress to a VPC-only resource.
+        #
+        # (The Glue L1 in this CDK version does not expose a
+        # security-configuration VPC-interface property, so pinning a job
+        # to specific subnets/SGs is not expressible through the
+        # CfnJob/ CfnSecurityConfiguration L1s anyway.)
 
         # --- Glue ETL scripts as versioned S3 assets ----------------------
         # The job code lives in version control and is published to S3 by
@@ -136,12 +118,17 @@ class AnalyticsStack(Stack):
         )
 
         # --- Glue ETL job: curated -> silver --------------------------------
+        # Property names follow the exact Glue L1 in this CDK version:
+        # the nested command type is CfnJob.JobCommandProperty, and
+        # glue_version / worker_type are plain strings ("4.0", "G.1X"),
+        # not typed enums. max_concurrent_runs lives inside
+        # execution_property, not at the job level.
         self.etl_job = glue.CfnJob(
             self,
             "BronzeToSilverJob",
             name="ghn-bronze-to-silver",
             role=job_role.role_arn,
-            command=glue.CfnJob.CommandProperty(
+            command=glue.CfnJob.JobCommandProperty(
                 name="glueetl",
                 python_version="3",
                 script_location=self.silver_script_asset.s3_object_url,
@@ -155,18 +142,14 @@ class AnalyticsStack(Stack):
                 "raw-prefix": "curated/orders/",
                 "silver-prefix": "silver/orders/",
             },
-            glue_version=glue.CfnJob.GlueVersion("4.0"),
-            worker_type=glue.CfnJob.WorkerType("G.1X"),
+            glue_version="4.0",
+            worker_type="G.1X",
             number_of_workers=1,
-            timeout=Duration.minutes(30),
-            max_concurrent_runs=1,
+            # CfnJob L1 takes timeout as a plain number of minutes, not a
+            # Duration.
+            timeout=30,
             execution_property=glue.CfnJob.ExecutionPropertyProperty(
-                # The job runs in the VPC so it can reach the GHN API and
-                # S3 through the NAT gateway.
-                vpc=glue.CfnJob.VPCProperty(
-                    security_group_ids=[glue_security_group.security_group_id],
-                    subnet_ids=[subnet.subnet_id for subnet in glue_subnets],
-                )
+                max_concurrent_runs=1
             ),
         )
 
@@ -176,7 +159,7 @@ class AnalyticsStack(Stack):
             "SilverToGoldJob",
             name="ghn-silver-to-gold",
             role=job_role.role_arn,
-            command=glue.CfnJob.CommandProperty(
+            command=glue.CfnJob.JobCommandProperty(
                 name="glueetl",
                 python_version="3",
                 script_location=self.gold_script_asset.s3_object_url,
@@ -190,11 +173,15 @@ class AnalyticsStack(Stack):
                 "silver-prefix": "silver/orders/",
                 "gold-prefix": "gold/",
             },
-            glue_version=glue.CfnJob.GlueVersion("4.0"),
-            worker_type=glue.CfnJob.WorkerType("G.1X"),
+            glue_version="4.0",
+            worker_type="G.1X",
             number_of_workers=1,
-            timeout=Duration.minutes(30),
-            max_concurrent_runs=1,
+            # CfnJob L1 takes timeout as a plain number of minutes, not a
+            # Duration.
+            timeout=30,
+            execution_property=glue.CfnJob.ExecutionPropertyProperty(
+                max_concurrent_runs=1
+            ),
         )
 
         # --- Orchestration: run the ETL on a schedule ----------------------
@@ -240,7 +227,8 @@ class AnalyticsStack(Stack):
             recursive_delete_option=False,
             work_group_configuration=athena.CfnWorkGroup.WorkGroupConfigurationProperty(
                 enforce_work_group_configuration=True,
-                publish_cloudwatch_metrics_enabled=True,
+                # Binding spells it with an underscore: publish_cloud_watch_*.
+                publish_cloud_watch_metrics_enabled=True,
                 bytes_scanned_cutoff_per_query=1024 * 1024 * 1024 * 10,  # 10 GB
                 result_configuration=athena.CfnWorkGroup.ResultConfigurationProperty(
                     output_location=f"s3://{base.athena_results_bucket.bucket_name}/athena-results/",

@@ -27,13 +27,21 @@ class StreamingStack(Stack):
         # dozen records each) that is ample, and it halves the stream's
         # fixed hourly cost. If throughput ever outgrows it, raise the
         # count and cdk deploy will auto-reshard (a 15-minute freeze).
+        # Amazon-managed (not customer) KMS for the stream itself: a custom
+        # CMK additionally needs a KMS *key policy* grant for the
+        # Kinesis service principal, whose exact form (region-qualified
+        # "kinesis:AWS/<stream>") we cannot verify at synth time - miss
+        # it and every PutRecord fails with a KMS error even though the
+        # stack deploys fine. MANAGED gives SSE for free.
+        # (S3 destinations stay customer-KMS: the S3 bucket L2 adds its
+        # key-policy grant for the S3 service automatically when it is
+        # passed a KMS key.)
         self.stream = kinesis.Stream(
             self,
             "OrdersStream",
             shard_count=1,
             retention_period=Duration.hours(24),
-            encryption=kinesis.StreamEncryption.KMS,
-            encryption_key=base.curated_data_key,
+            encryption=kinesis.StreamEncryption.MANAGED,
         )
 
         # --- Firehose service role: read Kinesis, write S3, use KMS ------
@@ -93,19 +101,19 @@ class StreamingStack(Stack):
         self.delivery_stream = firehose.CfnDeliveryStream(
             self,
             "OrdersDeliveryStream",
-            delivery_stream_type="KinesisStream",
+            delivery_stream_type="KinesisStreamAsSource",
             kinesis_stream_source_configuration=firehose.CfnDeliveryStream.KinesisStreamSourceConfigurationProperty(
-                stream_arn=self.stream.stream_arn,
+                kinesis_stream_arn=self.stream.stream_arn,
                 role_arn=role.role_arn,
             ),
             # Kinesis-sourced streams only accept the *extended* S3
-            # destination (that is where KmsKeyArn / ErrorOutputPrefix
-            # live; the plain S3DestinationConfiguration has none of
-            # them). Property names are CloudFormation's exact spellings:
-            # CompressionFormat - NOT "CompressionType" - and there is
-            # no separate "Format" property. Records are already JSON
-            # strings, so GZIP only compresses the batch file; Parquet
-            # conversion belongs to Glue, not Firehose.
+            # destination (that is where the encryption configuration
+            # and ErrorOutputPrefix live; the plain S3DestinationConfiguration
+            # has neither). Property names follow CloudFormation's exact
+            # spellings: CompressionFormat - NOT "CompressionType" - and
+            # there is no separate "Format" property. Records are already
+            # JSON strings, so GZIP only compresses the batch file;
+            # Parquet conversion belongs to Glue, not Firehose.
             extended_s3_destination_configuration=(
                 firehose.CfnDeliveryStream.ExtendedS3DestinationConfigurationProperty(
                     bucket_arn=base.curated_bucket.bucket_arn,
@@ -113,16 +121,26 @@ class StreamingStack(Stack):
                     error_output_prefix="curated/errors/",
                     role_arn=role.role_arn,
                     compression_format="GZIP",
-                    buffering_size=64,      # MB - flush when the batch hits 64 MB
-                    buffering_interval=120,  # or every 2 minutes, whichever first
-                    # KmsKeyArn is a top-level property of the extended
-                    # S3 destination in the CFN schema.
-                    kms_key_arn=base.curated_data_key.key_arn,  # SSE-KMS
+                    # Flush when the batch hits 64 MB or every 2
+                    # minutes, whichever comes first.
+                    buffering_hints=firehose.CfnDeliveryStream.BufferingHintsProperty(
+                        interval_in_seconds=120,
+                        size_in_m_bs=64,
+                    ),
+                    # SSE-KMS is nested under EncryptionConfiguration,
+                    # not a top-level KmsKeyArn on the extended S3
+                    # destination.
+                    encryption_configuration=firehose.CfnDeliveryStream.EncryptionConfigurationProperty(
+                        kms_encryption_config=firehose.CfnDeliveryStream.KMSEncryptionConfigProperty(
+                            awskms_key_arn=base.curated_data_key.key_arn
+                        )
+                    ),
                 )
             ),
         )
 
         # L1 CfnDeliveryStream exposes its physical name via CfnRef (no
-        # .delivery_stream_name property), the Kinesis L2 exposes .stream_name.
-        CfnOutput(self, "DeliveryStreamName", value=Fn.ref(self.delivery_stream))
+        # .delivery_stream_name property); Fn.ref takes the logical id,
+        # not the construct itself. The Kinesis L2 exposes .stream_name.
+        CfnOutput(self, "DeliveryStreamName", value=Fn.ref(self.delivery_stream.logical_id))
         CfnOutput(self, "KinesisStreamName", value=self.stream.stream_name)

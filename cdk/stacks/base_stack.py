@@ -36,16 +36,14 @@ class BaseStack(Stack):
             CfnOutput(self, "VpcId", value=self.vpc.vpc_id)
 
         # --- KMS: one key per data domain so we can revoke per domain ----
-        # grant_s3_access=True is not optional: with SSE-KMS buckets, the
-        # KMS key's own policy must let S3 encrypt/decrypt, or every
-        # object write fails at runtime with a KMS access error even
-        # though the stack deploys fine.
+        # When an S3 L2 bucket is passed a KMS key as its encryption key,
+        # CDK automatically adds the S3 service grant to the key's own
+        # key policy, so no separate grant helper is needed here.
         self.raw_data_key = kms.Key(
             self,
             "RawDataKey",
             description="Encrypts S3 raw landing zone objects",
             enable_key_rotation=True,
-            grant_s3_access=True,
             removal_policy=RemovalPolicy.RETAIN,
         )
         self.curated_data_key = kms.Key(
@@ -53,7 +51,6 @@ class BaseStack(Stack):
             "CuratedDataKey",
             description="Encrypts S3 curated / analytics objects",
             enable_key_rotation=True,
-            grant_s3_access=True,
             removal_policy=RemovalPolicy.RETAIN,
         )
 

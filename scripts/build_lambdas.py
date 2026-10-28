@@ -42,14 +42,45 @@ def build(name: str, source_dir: Path) -> Path:
 
     reqs = source_dir / "requirements.txt"
     if reqs.exists():
-        print(f"[{name}] pip install -r {reqs.name} -> {out.relative_to(ROOT)}/")
+        print(f"[{name}] pip install (linux/amd64...aarch64, cp312) -> {out.relative_to(ROOT)}/")
+        # Cross-target the install at the exact target of the deployed
+        # runtime: Lambda ARM_64 = Linux aarch64 + CPython 3.12 (the
+        # pinned Lambda runtime). Without --platform/--python-version,
+        # pip would pick wheels for the *local* machine (macOS arm64,
+        # Python 3.13 on a dev box) and the Lambda import would fail with
+        # an incompatible-binary error on the first invoke.
+        # --only-binary=:all: forces resolution against wheel tags only,
+        # which is what makes cross-targeting safe.
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "-q",
-             "-r", str(reqs), "--target", str(out), "--no-cache-dir"],
+             "-r", str(reqs), "--target", str(out), "--no-cache-dir",
+             "--platform", "manylinux2014_aarch64",
+             "--python-version", "3.12",
+             "--implementation", "cp",
+             "--abi", "cp312",
+             "--only-binary", ":all:"],
             check=True,
         )
+    _verify_wheel_tags(out)
     print(f"[{name}] built {out.relative_to(ROOT)}/")
     return out
+
+
+def _verify_wheel_tags(out: Path) -> None:
+    """Fail early if a wrong-platform wheel snuck into the package."""
+    bad = []
+    for wheel in out.glob("*/*.dist-info/WHEEL"):
+        for line in wheel.read_text().splitlines():
+            if not line.startswith("Tag:"):
+                continue
+            tag = line.split(":", 1)[1].strip()
+            if "macosx" in tag or tag.endswith(tuple(f"cp{v}" for v in range(313, 320))):
+                bad.append((wheel.parent.name, tag))
+    if bad:
+        raise SystemExit(
+            f"wrong-platform wheels in {out.name}: {bad!r}. "
+            f"The cross-target pip flags may have changed; check them."
+        )
 
 
 def main() -> int:

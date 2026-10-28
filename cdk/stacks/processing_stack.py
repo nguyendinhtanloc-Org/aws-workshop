@@ -3,7 +3,11 @@ from __future__ import annotations
 
 from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack, StackProps
 from aws_cdk import aws_iam as iam
-from aws_cdk import aws_lambda_destinations as destinations
+# aws_s3_notifications (not the older aws_lambda_destinations module,
+# whose cross-stack LambdaDestination crashes jsii with
+# "reading 'toString'" when the destination Lambda lives in a
+# different stack than the notification bucket).
+from aws_cdk import aws_s3_notifications as s3n
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
@@ -50,8 +54,8 @@ class ProcessingStack(Stack):
             log_retention=base.log_retention,
         )
 
-        base.orders_table.grant_read_write(self.processor)
-        base.raw_bucket.grant_read(self.processor)
+        # DynamoDB L2 names its data grants with a "_data" suffix.
+        base.orders_table.grant_read_write_data(self.processor)
         base.curated_bucket.grant_read(self.processor)
         self.processing_dlq.grant_send_messages(self.processor)
 
@@ -59,10 +63,31 @@ class ProcessingStack(Stack):
         # Processing is event-driven: a new raw order object triggers a run.
         # Only the orders prefix is wired, so master data batches do not
         # trigger the Processor.
-        base.raw_bucket.add_event_notification(
+        #
+        # The notification is attached to a *name-imported* reference to the
+        # raw bucket, not to base.raw_bucket itself. The bucket lives in the
+        # base stack while this Processor lives here; calling
+        # add_event_notification on the base-constructed bucket would put the
+        # notification's custom resource in the base stack, which then has to
+        # reference this stack's Lambda ARN - a base -> processing
+        # dependency that collides with processing -> base and makes synth
+        # fail with a cyclic reference. Importing by physical name keeps the
+        # whole notification (custom resource + Lambda permission) in this
+        # stack; the ordering is already guaranteed by
+        # processing.add_dependency(base) in app.py.
+        raw = s3.Bucket.from_bucket_name(
+            self,
+            "RawBucket",
+            base.raw_bucket.bucket_name,
+        )
+        raw.grant_read(self.processor)
+        # Object-key filters are positional NotificationKeyFilter objects,
+        # not a keyword argument (this CDK version's signature is
+        # add_event_notification(event, destination, *filters)).
+        raw.add_event_notification(
             s3.EventType.OBJECT_CREATED,
-            destinations.LambdaDestination(self.processor),
-            prefix="raw/orders/",
+            s3n.LambdaDestination(self.processor),
+            s3.NotificationKeyFilter(prefix="raw/orders/"),
         )
 
         CfnOutput(self, "ProcessorFunctionName", value=self.processor.function_name)

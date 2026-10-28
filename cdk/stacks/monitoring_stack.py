@@ -36,15 +36,15 @@ class MonitoringStack(Stack):
             display_name="GHN Pipeline Alerts",
             topic_name=f"{self.stack_name}-alerts",
         )
+        # Allow CloudWatch (the alarm source) to publish to the topic.
+        # add_to_resource_policy takes a single iam.PolicyStatement, not a
+        # sns.TopicPolicy / sns.Statement (those do not exist in this
+        # binding).
         self.alert_topic.add_to_resource_policy(
-            sns.TopicPolicy(
-                statements=[
-                    sns.Statement(
-                        actions=["SNS:Publish"],
-                        principals=[iam.ServicePrincipal("cloudwatch.amazonaws.com")],
-                        resources=[self.alert_topic.topic_arn],
-                    )
-                ]
+            iam.PolicyStatement(
+                actions=["SNS:Publish"],
+                principals=[iam.ServicePrincipal("cloudwatch.amazonaws.com")],
+                resources=[self.alert_topic.topic_arn],
             )
         )
 
@@ -112,12 +112,14 @@ class MonitoringStack(Stack):
         self.dashboard.add_widgets(
             cloudwatch.GraphWidget(
                 title="Ingestor invocations",
-                left=[ingestion.ingestor.metric_invocation_count()],
+                # This Lambda L2 exposes metric_invocations (not a
+                # metric_invocation_count alias).
+                left=[ingestion.ingestor.metric_invocations()],
                 width=12,
             ),
             cloudwatch.GraphWidget(
                 title="Processor invocations",
-                left=[processing.processor.metric_invocation_count()],
+                left=[processing.processor.metric_invocations()],
                 width=12,
             ),
             cloudwatch.GraphWidget(
@@ -127,7 +129,10 @@ class MonitoringStack(Stack):
             ),
             cloudwatch.GraphWidget(
                 title="Orders written to DynamoDB",
-                left=[base.orders_table.metric_consumed_read_write_capacity()],
+                # No single "read + write" convenience metric in this
+                # CDK version's DynamoDB L2; show consumed write capacity,
+                # which tracks order writes.
+                left=[base.orders_table.metric_consumed_write_capacity_units()],
                 width=12,
             ),
             cloudwatch.GraphWidget(
@@ -163,7 +168,7 @@ class MonitoringStack(Stack):
                     "Records are failing and waiting in the DLQ. "
                     "See docs/runbook.md -> 'Replaying failed records'."
                 ),
-            ).addAlarmAction(cw_actions.SnsAction(self.alert_topic))
+            ).add_alarm_action(cw_actions.SnsAction(self.alert_topic))
 
         cloudwatch.Alarm(
             self,
@@ -174,4 +179,4 @@ class MonitoringStack(Stack):
             comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
             treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
             alarm_description="The Processor is throwing. Check its logs.",
-        ).addAlarmAction(cw_actions.SnsAction(self.alert_topic))
+        ).add_alarm_action(cw_actions.SnsAction(self.alert_topic))
