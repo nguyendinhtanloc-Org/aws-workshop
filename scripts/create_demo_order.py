@@ -18,6 +18,7 @@ import json
 import os
 import sys
 import time
+from datetime import UTC, datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "lambda", "ingestor"))
 
@@ -106,9 +107,39 @@ def main() -> int:
 
     if not created:
         return 1
+
+    # Preferred path: register the new codes directly in the DynamoDB
+    # order-watchlist table (the Ingestor polls it and self-maintains
+    # terminal-state rows, so no redeploy is ever needed for new orders).
+    table_name = os.environ.get("ORDER_WATCHLIST_TABLE", "")
+    registered = False
+    if table_name:
+        try:
+            import boto3
+
+            ddb = boto3.resource("dynamodb")
+            table = ddb.Table(table_name)
+            now = datetime.now(UTC).isoformat()
+            with table.batch_writer() as batch:
+                for code in created:
+                    batch.put_item(
+                        Item={
+                            "pk": "#WATCH",
+                            "sk": code,
+                            "terminal": False,
+                            "registered_at": now,
+                            "updated_at": now,
+                        }
+                    )
+            registered = True
+            print(f"registered {len(created)} code(s) in {table_name} - the Ingestor picks them up on its next run.")
+        except Exception as exc:  # pragma: no cover - depends on AWS creds
+            print(f"warning: could not register in {table_name} ({exc}); fall back to .env below", file=sys.stderr)
+
     print()
-    print("Append these to GHN_ORDER_CODES in .env:")
-    print(f"  GHN_ORDER_CODES={','.join(created)}")
+    if not registered:
+        print("No watchlist table available. Append these to GHN_ORDER_CODES in .env instead:")
+        print(f"  GHN_ORDER_CODES={','.join(created)}")
     return 0
 
 

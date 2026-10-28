@@ -21,12 +21,35 @@ from typing import Any
 from ingestor_config import get_config
 from ghn_client import GhnClient, GhnClientError
 from normaliser import normalise_order
-from validator import ValidationError, validate_master_data, validate_order
+from validator import (
+    STATUS_NORMALISATION,
+    ValidationError,
+    validate_master_data,
+    validate_order,
+)
 
 logger = logging.getLogger()
 
 # Order matters: master data must land before orders that reference it.
 SOURCES = ("master_data", "orders", "shipping_status")
+
+# --- Order watchlist ---------------------------------------------------------
+# The GHN API cannot list orders, so *which* codes to poll is pipeline
+# state, not configuration. It lives in the order_watchlist table
+# (created by the CDK base stack) - one row per order code:
+#
+#   pk = "#WATCH"          sk = order_code
+#   attributes: registered_at, updated_at, last_status, terminal (bool)
+#
+# New codes get rows via scripts/create_demo_order.py and, eventually,
+# the GHN order-status webhook receiver. When a poll observes a terminal
+# status we flip the row's terminal flag so the next run stops polling
+# it (and its API calls stop costing money). GHN_ORDER_CODES remains
+# only as a bootstrap seed: codes still sitting in that env var are
+# registered in the table on their first scheduled run, after which the
+# table is the single source of truth and no redeploy is needed for new
+# orders.
+WATCH_PK = "#WATCH"
 
 
 def _split_csv(value: str) -> list[str]:
@@ -81,6 +104,110 @@ def _write_raw(source: str, payload: list[dict[str, Any]]) -> str:
         ContentType="application/json",
     )
     return key
+
+
+def _terminal(status: str) -> bool:
+    """True when a GHN status is final: no later detail fetch can move it."""
+    normalised = STATUS_NORMALISATION.get(status)
+    return normalised in {"delivered", "cancelled", "failed", "returned"}
+
+
+def _table_client() -> Any:
+    return _client("dynamodb")
+
+
+def _scan_watchlist() -> dict[str, bool]:
+    """order_code -> terminal flag, for every row in the watchlist.
+
+    One row per code (pk="#WATCH", sk=order_code). Pagination:
+    DynamoDB Scan returns up to 1 MB per page; follow LastEvaluatedKey
+    until it is gone.
+    """
+    table_name = os.environ.get("ORDER_WATCHLIST_TABLE", "")
+    if not table_name:
+        return {}
+    items: list[dict[str, Any]] = []
+    exclusive_start_key: dict[str, Any] | None = None
+    while True:
+        kwargs: dict[str, Any] = {"TableName": table_name, "Limit": 1000}
+        if exclusive_start_key:
+            kwargs["ExclusiveStartKey"] = exclusive_start_key
+        resp = _table_client().scan(**kwargs)
+        items.extend(resp.get("Items", []))
+        exclusive_start_key = resp.get("LastEvaluatedKey")
+        if not exclusive_start_key:
+            break
+    return {item["sk"]: bool(item.get("terminal", False)) for item in items if "sk" in item}
+
+
+def _load_order_codes() -> list[str]:
+    """Poll set = non-terminal watchlist rows, plus env codes not yet in the table.
+
+    GHN_ORDER_CODES is a bootstrap seed: codes still sitting in it get
+    registered in the table on their first scheduled run, after which
+    the table is the single source of truth and new orders no longer
+    need a redeploy of the Ingestor's environment. A code already marked
+    terminal in the table is *not* re-activated by a stale env entry -
+    terminal means done.
+    """
+    in_table = _scan_watchlist()
+    env_codes = _split_csv(os.environ.get("GHN_ORDER_CODES", ""))
+    to_register = [code for code in env_codes if code not in in_table]
+    if to_register:
+        _register_codes(to_register)
+    active = [code for code, terminal in in_table.items() if not terminal]
+    return active + to_register
+
+
+def _register_codes(codes: list[str]) -> None:
+    """Register order codes as watchlist rows (idempotent)."""
+    table_name = os.environ.get("ORDER_WATCHLIST_TABLE", "")
+    if not table_name:
+        logger.info("watchlist table not configured; %d code(s) stay env-driven", len(codes))
+        return
+    now = datetime.now(UTC).isoformat()
+    for code in codes:
+        _table_client().put_item(
+            TableName=table_name,
+            Item={
+                "pk": WATCH_PK,
+                "sk": code,
+                "terminal": False,
+                "registered_at": now,
+                "updated_at": now,
+            },
+        )
+    logger.info("registered %d order code(s) in the watchlist table", len(codes))
+
+
+def _record_poll_results(poll_codes: list[str], polled_statuses: dict[str, str]) -> None:
+    """Persist the latest observed status; mark terminal codes done.
+
+    An order whose status is terminal will not move again, so its row's
+    terminal flag is set: the next run stops polling it and its API
+    calls stop costing money.
+    """
+    table_name = os.environ.get("ORDER_WATCHLIST_TABLE", "")
+    if not table_name or not poll_codes:
+        return
+    now = datetime.now(UTC).isoformat()
+    for code in poll_codes:
+        status = polled_statuses.get(code, "")
+        if not status:
+            continue
+        terminal = _terminal(status)
+        _table_client().update_item(
+            TableName=table_name,
+            Key={"pk": WATCH_PK, "sk": code},
+            UpdateExpression="SET last_status = :s, updated_at = :t, terminal = :x",
+            ExpressionAttributeValues={
+                ":s": status,
+                ":t": now,
+                ":x": terminal,
+            },
+        )
+        if terminal:
+            logger.info("order %s reached terminal status %s; no longer polled", code, status)
 
 
 def _publish(source: str, records: list[dict[str, Any]]) -> int:
@@ -166,7 +293,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     client = _make_client()
     summary: dict[str, Any] = {"written": {}, "published": {}, "errors": {}}
 
-    order_codes = _split_csv(os.environ.get("GHN_ORDER_CODES", ""))
+    order_codes = _load_order_codes()
     ward_district_ids = [int(x) for x in _split_csv(os.environ.get("GHN_WARD_DISTRICTS", ""))]
     _polled_orders: list[dict[str, Any]] = []
 
@@ -202,6 +329,21 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                         len(rejected),
                         quarantine_key,
                     )
+                # Keep the watchlist fresh: record each polled order's
+                # current status, and archive the ones that reached a
+                # terminal state so the next run stops polling them.
+                # Watchlist bookkeeping must never fail the source's own
+                # ingest.
+                try:
+                    _record_poll_results(
+                        order_codes,
+                        {
+                            str(r.get("order_code", "")): str(r.get("status", ""))
+                            for r in raw_records
+                        },
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning("watchlist update failed: %s", exc)
             else:
                 # There is no dedicated status endpoint in this API
                 # generation: each polled order contributes one

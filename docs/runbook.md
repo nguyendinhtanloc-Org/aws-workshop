@@ -12,6 +12,7 @@ did not build it.
 | Logs | CloudWatch → Logs → `/aws/lambda/<stack>-ingestion-Ingestor` and `-processing-Processor` |
 | Failed records | SQS DLQ, URL exported by the ingestion / processing stack |
 | Raw data | S3 `raw/` (30-day retention) |
+| Order watchlist | DynamoDB table from the base stack's `OrderWatchlistTableName` output |
 | Data warehouse | Athena, workgroup `ghn-analytics` |
 | Dashboards | QuickSight |
 
@@ -32,18 +33,30 @@ schedule or invoke the function manually.
 
 The GHN API has **no list-orders endpoint**: `v2/shipping-order/detail`
 requires an `OrderCode`, and order codes only exist once an order is
-created (`v2/shipping-order/create`). The Ingestor therefore polls a
-watchlist in `GHN_ORDER_CODES` (comma-separated codes, in the Ingestor
-Lambda's environment or wherever you manage that variable).
+created (`v2/shipping-order/create`). So *which* codes to poll is
+pipeline state, not config. It lives in the **`order_watchlist`
+DynamoDB table** (one row per code: `pk="#WATCH"`, `sk=order_code`,
+plus `last_status`, `terminal`, timestamps).
 
-- **Demo/CI runs:** `python3 scripts/create_demo_order.py` creates test
-  orders through the create route and prints the exact
-  `GHN_ORDER_CODES=...` line to paste into `.env`. Its
+How a code enters and leaves the watchlist:
+
+- **Entry:** `scripts/create_demo_order.py` (or a future GHN status
+  webhook) writes a `#WATCH` row with `terminal=false`. The Ingestor
+  picks it up on its next scheduled run - no redeploy. Its
   `client_order_code` is timestamped, so re-running never duplicates an
   order (GHN returns the previously created code for a reused
   `client_order_code`).
-- **Live shop runs:** append the shop's real order codes as sales
-  happen; each scheduled run fetches the current detail for every code.
+- **Exit:** after each poll the Ingestor records the order's status.
+  When it observes a **terminal** status (delivered / cancelled /
+  failed / returned) it flips the row to `terminal=true`, and that
+  order is no longer polled on later runs - so a large historical
+  watchlist stops costing API calls and Lambda time once the orders
+  settle.
+- **Bootstrap:** `GHN_ORDER_CODES` in `.env` is only a *seed*. Codes
+  sitting there that are not yet in the table are registered on the
+  first scheduled run, after which the table is the single source of
+  truth. (Without AWS credentials the table env var is unset and the
+  Ingestor falls back to the env seed - local / mock runs.)
 
 Status *history* is not polled: in production, GHN's **Order Status
 Callback (webhook)** pushes status changes to an HTTPS endpoint. Until a

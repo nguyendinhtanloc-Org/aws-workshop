@@ -76,6 +76,10 @@ class IngestionStack(Stack):
                 "GHN_WARD_DISTRICTS": os.environ.get("GHN_WARD_DISTRICTS", ""),
                 "RAW_BUCKET_NAME": base.raw_bucket.bucket_name,
                 "KINESIS_STREAM_NAME": streaming.stream.stream_name,
+                # Which order codes to poll. The table is the source of
+                # truth; GHN_ORDER_CODES (env) is only a bootstrap seed
+                # that the Ingestor registers into the table on first run.
+                "ORDER_WATCHLIST_TABLE": base.watchlist_table.table_name,
             },
             log_retention=base.log_retention,
         )
@@ -89,6 +93,10 @@ class IngestionStack(Stack):
         )
         base.raw_bucket.grant_read_write(self.ingestor)
         streaming.stream.grant_write(self.ingestor)
+        # The Ingestor both reads the order watchlist (which codes to
+        # poll) and writes back the latest observed status, so the
+        # DynamoDB grant is read + write.
+        base.watchlist_table.grant_read_write_data(self.ingestor)
 
         # --- EventBridge: every 5 minutes ---------------------------------
         self.schedule = events.Rule(

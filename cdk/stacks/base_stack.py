@@ -130,6 +130,23 @@ class BaseStack(Stack):
             removal_policy=RemovalPolicy.RETAIN,
         )
 
+        # --- DynamoDB: order watchlist (which order codes to poll) --------
+        # The GHN API has no list-orders route, so the set of orders to
+        # poll is state, not config. Rows are added by scripts/create_
+        # demo_order.py (create route) and by a future webhook receiver;
+        # the Ingestor records each polled order's status so rows that
+        # reach a terminal status stop costing API calls.
+        self.watchlist_table = ddb.Table(
+            self,
+            "OrderWatchlistTable",
+            partition_key=ddb.Attribute(name="pk", type=ddb.AttributeType.STRING),
+            sort_key=ddb.Attribute(name="sk", type=ddb.AttributeType.STRING),
+            billing_mode=ddb.BillingMode.PAY_PER_REQUEST,
+            point_in_time_recovery=True,
+            encryption=ddb.TableEncryption.AWS_MANAGED,
+            removal_policy=RemovalPolicy.RETAIN,
+        )
+
         # --- CloudWatch: shared log group with explicit retention ---------
         self.log_retention = logs.RetentionDays.ONE_MONTH
 
@@ -137,6 +154,7 @@ class BaseStack(Stack):
         CfnOutput(self, "CuratedBucketName", value=self.curated_bucket.bucket_name)
         CfnOutput(self, "AthenaResultsBucketName", value=self.athena_results_bucket.bucket_name)
         CfnOutput(self, "OrdersTableName", value=self.orders_table.table_name)
+        CfnOutput(self, "OrderWatchlistTableName", value=self.watchlist_table.table_name)
 
     def _create_vpc(self) -> ec2.Vpc:
         """One NAT gateway, public + private-with-egress in two AZs."""
