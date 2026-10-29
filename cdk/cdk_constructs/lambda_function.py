@@ -7,13 +7,21 @@ once, and there is no per-function drift.
 """
 from __future__ import annotations
 
-import os
+from pathlib import Path
 
 from aws_cdk import Duration
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
+
+# code_path is passed relative to the *repo root* (e.g. "build/lambda-ingestor",
+# where scripts/build_lambdas.py writes). The CDK app is executed with a CWD of
+# its context dir (where cdk.json lives, i.e. cdk/), NOT the repo root, so a
+# naive CWD-relative lookup would look in the wrong place. Anchor every asset
+# to the repo root - this file is cdk/cdk_constructs/lambda_function.py, so the
+# root is three parents up - to make the path deterministic regardless of CWD.
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 class PipelineLambdaFunction(lambda_.Function):
@@ -34,9 +42,11 @@ class PipelineLambdaFunction(lambda_.Function):
         environment: dict[str, str] | None = None,
         **kwargs: object,
     ) -> None:
-        if not os.path.isdir(os.path.abspath(code_path)):
+        asset_path = _REPO_ROOT / code_path
+        if not asset_path.is_dir():
             raise RuntimeError(
-                f"Lambda code dir {code_path!r} not found. Run "
+                f"Lambda code dir {code_path!r} not found "
+                f"(looked at {asset_path}). Run "
                 f"`python3 scripts/build_lambdas.py` before cdk deploy."
             )
         super().__init__(
@@ -50,7 +60,7 @@ class PipelineLambdaFunction(lambda_.Function):
             # has no `requests`, so an unbundled source dir fails on the
             # very first import.
             code=lambda_.Code.from_asset(
-                code_path,
+                str(asset_path),
                 exclude=["tests", "__pycache__", "*.pyc"],
             ),
             timeout=timeout,
