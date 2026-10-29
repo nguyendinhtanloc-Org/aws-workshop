@@ -48,9 +48,15 @@ def build(name: str, source_dir: Path) -> Path:
         # pinned Lambda runtime). Without --platform/--python-version,
         # pip would pick wheels for the *local* machine (macOS arm64,
         # Python 3.13 on a dev box) and the Lambda import would fail with
-        # an incompatible-binary error on the first invoke.
+        # an incompatible-binary error.
         # --only-binary=:all: forces resolution against wheel tags only,
         # which is what makes cross-targeting safe.
+        # The pip timeouts / retries below are widened for low-bandwidth
+        # links (a 15 s read timeout on a slow or congested connection
+        # aborts the metadata fetch midway and surfaces as the
+        # confusing "No matching distribution found for
+        # charset-normalizer" error even though the only real problem
+        # is a flaky download).
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "-q",
              "-r", str(reqs), "--target", str(out), "--no-cache-dir",
@@ -58,7 +64,9 @@ def build(name: str, source_dir: Path) -> Path:
              "--python-version", "3.12",
              "--implementation", "cp",
              "--abi", "cp312",
-             "--only-binary", ":all:"],
+             "--only-binary", ":all:",
+             "--timeout", "60",
+             "--retries", "10"],
             check=True,
         )
     _verify_wheel_tags(out)
