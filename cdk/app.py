@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -17,6 +18,32 @@ try:
     load_dotenv()
 except ImportError:
     pass
+
+# --- Lambda package build ---------------------------------------------------
+# The two Lambdas deploy from build/lambda-* (cross-targeted wheels; see
+# scripts/build_lambdas.py). build/ is gitignored, so it vanishes after a
+# git clean / fresh clone - running `cdk diff` / `cdk deploy` from a bare
+# checkout would then crash at synth with "Lambda code dir not found".
+# Rebuild automatically instead of making every developer remember the
+# manual step. scripts/build_lambdas.py is idempotent and fast when the
+# packages are already current.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+_LAMBDA_PACKAGES = ("build/lambda-ingestor", "build/lambda-processor")
+
+
+def _ensure_lambda_packages() -> None:
+    missing = [p for p in _LAMBDA_PACKAGES if not os.path.isdir(os.path.join(_REPO_ROOT, p))]
+    if not missing:
+        return
+    print(f"build packages missing ({', '.join(missing)}) - running scripts/build_lambdas.py ...")
+    subprocess.run(
+        [sys.executable, os.path.join(_REPO_ROOT, "scripts", "build_lambdas.py")],
+        check=True,
+        cwd=_REPO_ROOT,
+    )
+
+
+_ensure_lambda_packages()
 
 from aws_cdk import App, Environment, Tags
 
