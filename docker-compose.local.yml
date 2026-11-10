@@ -1,0 +1,73 @@
+services:
+  localstack:
+    image: localstack/localstack:latest
+    container_name: ghn-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=s3,dynamodb,sqs,secretsmanager
+      - AWS_DEFAULT_REGION=ap-southeast-1
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - "./.localstack:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: ghn-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=password123
+    command: server /data --console-address ":9001"
+    volumes:
+      - "./.minio_data:/data"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  iceberg-rest:
+    image: tabulario/iceberg-rest:latest
+    container_name: ghn-iceberg-rest
+    depends_on:
+      - minio
+    ports:
+      - "8181:8181"
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password123
+      - AWS_REGION=ap-southeast-1
+      - CATALOG_WAREHOUSE=s3://warehouse/
+      - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
+      - CATALOG_S3__ENDPOINT=http://minio:9000
+      - CATALOG_S3__PATH__STYLE__ACCESS=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8181/v1/config"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  trino:
+    image: trinodb/trino:435
+    container_name: ghn-trino-athena
+    depends_on:
+      - minio
+      - iceberg-rest
+    ports:
+      - "8080:8080"
+    volumes:
+      - "./docker/trino/etc/catalog:/etc/trino/catalog"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
