@@ -53,8 +53,8 @@
 
 ---
 
-### 👤 MEMBER 1: TECH LEAD (HẠ TẦNG, TEST HARNESS & WEBHOOK INGESTION)
-*Sở hữu: `docker-compose.local.yml`, `scripts/init_local_env.py`, `src/lambda/ingestor/`*
+### 👤 MEMBER 1: TECH LEAD (HẠ TẦNG, TEST HARNESS, CI/CD & WEBHOOK INGESTION)
+*Sở hữu: `docker-compose.local.yml`, `scripts/init_local_env.py`, `.github/workflows/`, `src/lambda/ingestor/`*
 
 #### TUẦN 1 (10/11/2026 – 16/11/2026): DỰNG SÂN CHƠI LOCAL & XÂY DỰNG WEBHOOK RECEIVER
 * [x] **Ngày 1 (D1 - Thứ Ba, 10/11/2026):** [ĐÃ XONG SẴN] Dựng môi trường Docker Compose chuẩn Trino + MinIO + LocalStack + Iceberg REST.
