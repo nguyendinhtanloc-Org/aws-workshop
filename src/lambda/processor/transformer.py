@@ -43,6 +43,54 @@ STATUS_NORMALISATION = {
     "scrap": "failed",
 }
 
+# The 7 terminal states in the GHN lifecycle (including both raw "cancel" and normalised "cancelled").
+# Once an order reaches one of these states, no subsequent non-terminal or stale event may overwrite it.
+TERMINAL_STATUSES = frozenset(
+    {
+        "delivered",
+        "returned",
+        "cancel",
+        "cancelled",
+        "exception",
+        "lost",
+        "damage",
+        "scrap",
+    }
+)
+
+# Local phase ordering within a single delivery_attempt.
+# Protects against clock skew between sequential states in the same attempt
+# while still allowing a new delivery_attempt (retry loop) to reset phase to 40 (delivering).
+PHASE_RANK = {
+    "ready_to_pick": 10,
+    "pending": 10,
+    "picking": 20,
+    "money_collect_picking": 20,
+    "picked": 20,
+    "storing": 30,
+    "sorting": 30,
+    "transporting": 30,
+    "in_transit": 30,
+    "delivering": 40,
+    "money_collect_delivering": 40,
+    "delivery_fail": 50,
+    "failed": 50,
+    "waiting_to_return": 60,
+    "return": 60,
+    "return_transporting": 60,
+    "return_sorting": 60,
+    "returning": 60,
+    "return_fail": 65,
+    "delivered": 100,
+    "returned": 100,
+    "cancel": 100,
+    "cancelled": 100,
+    "exception": 100,
+    "lost": 100,
+    "damage": 100,
+    "scrap": 100,
+}
+
 # Numeric fields that must be written as Decimal.
 #
 # boto3's DynamoDB type serializer raises TypeError on Python floats:
@@ -95,6 +143,31 @@ def _parse_ts(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+def _compute_delivery_attempt(order: dict[str, Any], updated_at: datetime) -> int:
+    """Compute delivery_attempt = 1 + number of prior delivery_fail transitions from log."""
+    if order.get("delivery_attempt") is not None:
+        return int(order["delivery_attempt"])
+    log = order.get("log")
+    if not isinstance(log, list) or not log:
+        return 1
+    raw_status = str(order.get("status", ""))
+    last_entry = log[-1] if isinstance(log[-1], dict) else {}
+    last_ts = _parse_ts(last_entry.get("updated_date"))
+    if last_entry.get("status") == raw_status and (last_ts is None or last_ts == updated_at):
+        prior_entries = log[:-1]
+    else:
+        prior_entries = [
+            e
+            for e in log
+            if isinstance(e, dict)
+            and (_parse_ts(e.get("updated_date")) is None or _parse_ts(e.get("updated_date")) < updated_at)
+        ]
+    prior_fails = sum(
+        1 for e in prior_entries if isinstance(e, dict) and e.get("status") in ("delivery_fail", "failed")
+    )
+    return 1 + prior_fails
+
+
 def transform_order(order: dict[str, Any]) -> dict[str, Any]:
     """Convert a raw order into the DynamoDB item shape.
 
@@ -110,18 +183,32 @@ def transform_order(order: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"order {order['order_code']!r} has unparseable created_at")
 
     delivered_at = _parse_ts(order.get("delivered_at"))
+    updated_at = _parse_ts(order.get("updated_at")) or delivered_at or created_at
     lead_time_hours = None
     if delivered_at is not None:
         lead_time_hours = round((delivered_at - created_at).total_seconds() / 3600, 2)
+
+    raw_status = str(order["status"])
+    norm_status = STATUS_NORMALISATION.get(raw_status, raw_status)
+    if order.get("is_terminal") is not None:
+        is_terminal = bool(order["is_terminal"])
+    else:
+        is_terminal = raw_status in TERMINAL_STATUSES
+    delivery_attempt = _compute_delivery_attempt(order, updated_at)
+    phase_rank = int(order["phase_rank"]) if order.get("phase_rank") is not None else PHASE_RANK.get(raw_status, 0)
 
     item: dict[str, Any] = {
         "pk": f"ORDER#{order['order_code']}",
         "sk": f"{created_at:%Y-%m-%d}",
         "order_code": order["order_code"],
         "order_id": order.get("order_id"),
-        "status": STATUS_NORMALISATION.get(order["status"], order["status"]),
+        "status": norm_status,
+        "is_terminal": is_terminal,
+        "delivery_attempt": delivery_attempt,
+        "phase_rank": phase_rank,
         "created_at": created_at.isoformat(),
         "delivered_at": delivered_at.isoformat() if delivered_at else None,
+        "updated_at": updated_at.isoformat(),
         "ingested_at": datetime.now(UTC).isoformat(),
     }
 
