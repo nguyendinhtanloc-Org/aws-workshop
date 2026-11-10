@@ -94,3 +94,56 @@ def test_unknown_status_passes_through_unchanged():
     """The validator rejects unknown statuses; the transformer does not guess."""
     item = transform_order(dict(BASE, status="something_new"))
     assert item["status"] == "something_new"
+    assert item["is_terminal"] is False
+    assert item["phase_rank"] == 0
+
+
+def test_seven_terminal_states_marked_terminal():
+    """All 7 GHN terminal states must have is_terminal=True; non-terminal states False."""
+    seven_terminals = (
+        "delivered",
+        "returned",
+        "cancel",
+        "exception",
+        "lost",
+        "damage",
+        "scrap",
+    )
+    for raw in seven_terminals:
+        item = transform_order(dict(BASE, status=raw))
+        assert item["is_terminal"] is True, f"Expected {raw} to be terminal"
+
+    for non_term in ("ready_to_pick", "picking", "storing", "delivering", "delivery_fail", "returning"):
+        item = transform_order(dict(BASE, status=non_term))
+        assert item["is_terminal"] is False, f"Expected {non_term} to be non-terminal"
+
+
+def test_delivery_attempt_computed_from_log():
+    """delivery_attempt = 1 + prior delivery_fail occurrences in log."""
+    # First delivery failure itself is still attempt 1
+    order_fail_1 = dict(
+        BASE,
+        status="delivery_fail",
+        updated_at="2026-01-01T11:00:00Z",
+        log=[
+            {"status": "delivering", "updated_date": "2026-01-01T09:00:00Z"},
+            {"status": "delivery_fail", "updated_date": "2026-01-01T11:00:00Z"},
+        ],
+    )
+    assert transform_order(order_fail_1)["delivery_attempt"] == 1
+
+    # Redelivery after 1 prior fail gets delivery_attempt = 2
+    order_retry_2 = dict(
+        BASE,
+        status="delivering",
+        updated_at="2026-01-01T14:00:00Z",
+        log=[
+            {"status": "delivering", "updated_date": "2026-01-01T09:00:00Z"},
+            {"status": "delivery_fail", "updated_date": "2026-01-01T11:00:00Z"},
+            {"status": "delivering", "updated_date": "2026-01-01T14:00:00Z"},
+        ],
+    )
+    item_retry_2 = transform_order(order_retry_2)
+    assert item_retry_2["delivery_attempt"] == 2
+    assert item_retry_2["phase_rank"] == 40
+
