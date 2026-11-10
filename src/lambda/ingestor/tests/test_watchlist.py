@@ -82,14 +82,14 @@ def _install(table: FakeTable, env: dict[str, str]):
     Deterministic teardown: env keys and handler globals are restored on
     exit regardless of how the body ends.
     """
-    keys = list(env)
-    saved_env = {k: os.environ.get(k) for k in keys}
-    saved_env["ORDER_WATCHLIST_TABLE"] = os.environ.get("ORDER_WATCHLIST_TABLE")
-    keys.append("ORDER_WATCHLIST_TABLE")
+    controlled_keys = set(env).union({"ORDER_WATCHLIST_TABLE", "GHN_ORDER_CODES"})
+    saved_env = {k: os.environ.get(k) for k in controlled_keys}
     saved_clients = handler._clients
     saved_table_client = handler._table_client
     fake_client = _make_fake_client(table)
     try:
+        for k in ("ORDER_WATCHLIST_TABLE", "GHN_ORDER_CODES"):
+            os.environ.pop(k, None)
         for k, v in env.items():
             os.environ[k] = v
         handler._clients = {"dynamodb": fake_client}
