@@ -9,9 +9,9 @@ from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack, StackProps
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_s3_notifications as s3n
 from aws_cdk import aws_sqs as sqs
+from cdk_constructs.lambda_function import PipelineLambdaFunction
 from constructs import Construct
 
-from cdk_constructs.lambda_function import PipelineLambdaFunction
 from stacks.base_stack import BaseStack
 
 

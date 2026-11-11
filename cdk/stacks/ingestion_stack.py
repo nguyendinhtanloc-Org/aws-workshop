@@ -9,9 +9,9 @@ from aws_cdk import aws_events_targets as targets
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_secretsmanager as secretsmanager
 from aws_cdk import aws_sqs as sqs
+from cdk_constructs.lambda_function import PipelineLambdaFunction
 from constructs import Construct
 
-from cdk_constructs.lambda_function import PipelineLambdaFunction
 from stacks.base_stack import BaseStack
 from stacks.streaming_stack import StreamingStack
 
