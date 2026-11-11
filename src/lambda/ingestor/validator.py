@@ -96,6 +96,7 @@ def normalise_status(status: str) -> str:
     except KeyError:
         raise ValueError(f"unknown GHN status {status!r}") from None
 
+
 # The GHN order detail guarantees order_code, status and a creation
 # timestamp; province/district ids are NOT in the API response (addresses
 # are free text), so they stay optional throughout the warehouse.

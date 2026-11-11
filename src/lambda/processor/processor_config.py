@@ -5,15 +5,14 @@ and AWS runs - the only difference is the values, not the mechanism.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 from typing import Any
 
-try:  # pragma: no cover - depends on local environment
+with contextlib.suppress(ImportError):  # pragma: no cover - dotenv absent in Lambda runtime
     from dotenv import load_dotenv
 
     load_dotenv()  # no-op if no .env file is present
-except ImportError:  # pragma: no cover - dotenv absent in Lambda runtime
-    pass
 
 
 def get_config() -> dict[str, Any]:

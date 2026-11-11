@@ -15,14 +15,7 @@ GHN's API conventions.
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta
-
-try:
-    from datetime import UTC
-except ImportError:  # Python < 3.11
-    from datetime import timezone
-
-    UTC = timezone.utc
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 # Master data in the shape the GHN API actually returns (confirmed 200s

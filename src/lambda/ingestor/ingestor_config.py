@@ -12,17 +12,16 @@ keeps unit tests and local scripts free of network dependencies.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from functools import lru_cache
 from typing import Any
 
-try:  # pragma: no cover - depends on local environment
+with contextlib.suppress(ImportError):  # pragma: no cover - dotenv absent in Lambda runtime
     from dotenv import load_dotenv
 
     load_dotenv()  # no-op if no .env file is present
-except ImportError:  # pragma: no cover - dotenv absent in Lambda runtime
-    pass
 
 
 def _from_secrets_manager(secret_arn: str) -> str:
@@ -30,7 +29,7 @@ def _from_secrets_manager(secret_arn: str) -> str:
     import boto3
 
     resp = boto3.client("secretsmanager").get_secret_value(SecretId=secret_arn)
-    return json.loads(resp["SecretString"])["token"]
+    return str(json.loads(resp["SecretString"])["token"])
 
 
 def _from_environment() -> str:

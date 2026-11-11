@@ -18,8 +18,8 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
-from ingestor_config import get_config
 from ghn_client import GhnClient, GhnClientError
+from ingestor_config import get_config
 from normaliser import normalise_order
 from validator import (
     STATUS_NORMALISATION,
@@ -55,6 +55,7 @@ WATCH_PK = "#WATCH"
 def _split_csv(value: str) -> list[str]:
     return [item.strip() for item in (value or "").split(",") if item.strip()]
 
+
 # boto3 clients are created on first use rather than at import time.
 # Importing this module must not require AWS credentials or open a
 # connection - that is what keeps the unit tests and local scripts free
@@ -80,12 +81,12 @@ def _get_token() -> str:
     """Read the GHN API token - from Secrets Manager in AWS, .env locally."""
     secret_arn = os.environ.get("GHN_SECRET_ARN")
     if not secret_arn:
-        return get_config()["ghn_token"]
+        return str(get_config()["ghn_token"])
     try:
         resp = _client("secretsmanager").get_secret_value(SecretId=secret_arn)
     except Exception as exc:
         raise GhnClientError(f"cannot read secret {secret_arn}: {exc}") from exc
-    return json.loads(resp["SecretString"])["token"]
+    return str(json.loads(resp["SecretString"])["token"])
 
 
 def _write_raw(source: str, payload: list[dict[str, Any]]) -> str:
@@ -137,7 +138,7 @@ def _scan_watchlist() -> dict[str, bool]:
         exclusive_start_key = resp.get("LastEvaluatedKey")
         if not exclusive_start_key:
             break
-    return {item["sk"]: bool(item.get("terminal", False)) for item in items if "sk" in item}
+    return {str(item["sk"]): bool(item.get("terminal", False)) for item in items if "sk" in item}
 
 
 def _load_order_codes() -> list[str]:
@@ -266,7 +267,6 @@ def _make_client() -> Any:
 
         logger.info("using mock GHN data source")
         return MockGhnClient()
-
 
     config = get_config()
     shop_id = config.get("ghn_shop_id", "")

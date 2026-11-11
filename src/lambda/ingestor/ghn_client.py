@@ -131,7 +131,7 @@ class GhnClient:
                         detail = resp.text[:160]
                     raise GhnClientError(f"GHN API error path={path} status={resp.status_code}: {detail}")
                 else:
-                    payload = resp.json()
+                    payload = dict(resp.json())
                     if payload.get("code") not in (200, None):
                         raise GhnClientError(f"GHN API error path={path} code={payload.get('code')}")
                     return payload
@@ -146,7 +146,7 @@ class GhnClient:
         breakdown and expected_delivery_time.
         """
         response = self._post(ENDPOINTS["create_order"], payload)
-        return response.get("data") or {}
+        return dict(response.get("data") or {})
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """GET an endpoint, retrying transient failures with backoff.
@@ -188,7 +188,7 @@ class GhnClient:
                         detail = resp.text[:160]
                     raise GhnClientError(f"GHN API error path={path} status={resp.status_code}: {detail}")
                 else:
-                    payload = resp.json()
+                    payload = dict(resp.json())
                     if payload.get("code") not in (200, None):
                         raise GhnClientError(
                             f"GHN API error path={path} code={payload.get('code')}"
