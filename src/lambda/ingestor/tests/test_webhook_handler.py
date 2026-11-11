@@ -9,8 +9,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-import webhook_handler  # noqa: E402
-from webhook_handler import parse_webhook_payload, verify_signature  # noqa: E402
+import webhook_handler
+from webhook_handler import parse_webhook_payload, verify_signature
 
 
 def test_verify_signature_valid():

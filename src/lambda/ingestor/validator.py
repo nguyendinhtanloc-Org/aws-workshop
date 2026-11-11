@@ -128,7 +128,7 @@ def validate_order(order: dict[str, Any]) -> None:
         )
 
     weight = order.get("weight")
-    if weight is not None and (not isinstance(weight, (int, float)) or weight <= 0):
+    if weight is not None and (not isinstance(weight, int | float) or weight <= 0):
         raise ValidationError(f"order {order.get('order_code')!r} has invalid weight {weight!r}")
 
 

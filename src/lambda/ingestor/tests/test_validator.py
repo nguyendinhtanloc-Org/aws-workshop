@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import pytest
-
 from validator import ValidationError, validate_master_data, validate_order
 
 VALID_ORDER = {

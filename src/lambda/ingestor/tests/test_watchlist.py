@@ -18,8 +18,8 @@ from contextlib import contextmanager
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-import handler  # noqa: E402
-from handler import (  # noqa: E402
+import handler
+from handler import (
     WATCH_PK,
     _load_order_codes,
     _record_poll_results,

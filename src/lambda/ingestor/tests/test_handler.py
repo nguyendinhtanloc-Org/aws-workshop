@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from handler import _partition_valid  # noqa: E402
+from handler import _partition_valid
 
 GOOD = {
     "order_id": "1",
