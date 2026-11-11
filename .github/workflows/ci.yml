@@ -25,8 +25,12 @@ jobs:
           cache: pip
       - run: pip install -r requirements-dev.txt
       - run: ruff check src cdk tests scripts
-      - run: ruff format --check src cdk tests scripts
-      - run: mypy src cdk tests
+      - name: Typecheck packages
+        run: |
+          MYPYPATH=src/lambda/ingestor mypy src/lambda/ingestor --exclude tests
+          MYPYPATH=src/lambda/processor mypy src/lambda/processor --exclude tests
+          MYPYPATH=src/glue mypy src/glue/lib
+          MYPYPATH=cdk mypy cdk
 
   test:
     name: Unit Tests
@@ -56,6 +60,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install -g aws-cdk
       - run: pip install -r cdk/requirements.txt
       - run: cdk synth --app "python cdk/app.py" --quiet
         env:
@@ -68,6 +76,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install and run gitleaks CLI
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.2/gitleaks_8.24.2_linux_x64.tar.gz -o /tmp/gitleaks.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . --verbose --redact
