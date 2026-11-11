@@ -28,7 +28,7 @@ with contextlib.suppress(ImportError):
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "lambda", "ingestor"))
 
-from ghn_client import API_PREFIX, ENDPOINTS  # noqa: E402
+from ghn_client import API_PREFIX, ENDPOINTS
 
 # Candidate query-param names, most-likely first.
 CANDIDATES = [
@@ -73,9 +73,9 @@ def main() -> int:
             mark = "   <== WORKS"
             found = True
             print(f"  ?{name}={code}  HTTP {resp.status_code} {mark}")
-            if args.verbose or True:
-                data = body.get("data") or {}
-                print("    " + json.dumps(data, ensure_ascii=False)[:400])
+            data = body.get("data") or {}
+            preview = json.dumps(data, ensure_ascii=False)
+            print("    " + (preview if args.verbose else preview[:400]))
         else:
             print(f"  ?{name}={code}  HTTP {resp.status_code} {str(message)[:80]}")
         if found:

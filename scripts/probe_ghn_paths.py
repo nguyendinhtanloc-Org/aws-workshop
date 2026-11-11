@@ -184,7 +184,7 @@ def main() -> int:
                     mark = "  <== route exists, wrong method (try POST)"
                 else:
                     mark = ""
-                shown = detail if status in (400, 401, 403, 404, 405, 422) else detail
+                shown = detail
                 print(f"  host={host.split('//')[1]:32} prefix={prefix or '(none)':18} {path}  HTTP {status} {shown}{mark}")
                 if usable:
                     hits.append(url)
