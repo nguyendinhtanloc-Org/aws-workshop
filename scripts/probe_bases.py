@@ -2,17 +2,16 @@
 """Probe candidate GHN API base URLs. Read-only, no AWS needed."""
 from __future__ import annotations
 
-import json
+import contextlib
 import os
 import sys
 
 import requests
 
-try:
+with contextlib.suppress(ImportError):
     from dotenv import load_dotenv
+
     load_dotenv()
-except ImportError:
-    pass
 
 token = os.environ.get("GHN_API_TOKEN")
 if not token:
@@ -54,7 +53,7 @@ for base in BASES:
                 else:
                     info = f"code={payload.get('code')}"
             except ValueError:
-                info = f"content-type={r.headers.get('Content-Type','?')}"
+                info = f"content-type={r.headers.get('Content-Type', '?')}"
         else:
             try:
                 info = f"code={r.json().get('code')!r}"

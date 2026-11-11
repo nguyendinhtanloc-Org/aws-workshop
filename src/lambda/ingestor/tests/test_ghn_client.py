@@ -33,13 +33,13 @@ class FakeSession:
 def _client(responses: list[FakeResponse]) -> tuple[GhnClient, FakeSession]:
     client = GhnClient(token="secret-token")
     session = FakeSession(responses)
-    client._session = session  # noqa: SLF001 - test seam
+    client._session = session  # test seam
     return client, session
 
 
 def test_successful_response_is_returned():
     client, _ = _client([FakeResponse(200, {"code": 200, "data": [{"province_id": 1}]})])
-    payload = client._get("/api/v1/apiv3/getProvinces")  # noqa: SLF001
+    payload = client._get("/api/v1/apiv3/getProvinces")
     assert payload["data"] == [{"province_id": 1}]
 
 
@@ -47,7 +47,7 @@ def test_rate_limit_is_retried():
     client, session = _client(
         [FakeResponse(429), FakeResponse(200, {"code": 200, "data": []})]
     )
-    payload = client._get("/api/v1/apiv3/getOrder")  # noqa: SLF001
+    payload = client._get("/api/v1/apiv3/getOrder")
     assert payload["data"] == []
     assert session.calls == 2
 
@@ -56,27 +56,27 @@ def test_server_error_is_retried():
     client, session = _client(
         [FakeResponse(503), FakeResponse(200, {"code": 200, "data": []})]
     )
-    client._get("/api/v1/apiv3/getOrder")  # noqa: SLF001
+    client._get("/api/v1/apiv3/getOrder")
     assert session.calls == 2
 
 
 def test_client_error_is_not_retried():
     client, session = _client([FakeResponse(403, {"message": "forbidden"})])
     with pytest.raises(GhnClientError, match="403"):
-        client._get("/api/v1/apiv3/getOrder")  # noqa: SLF001
+        client._get("/api/v1/apiv3/getOrder")
     assert session.calls == 1
 
 
 def test_api_level_error_code_raises():
     client, _ = _client([FakeResponse(200, {"code": 400, "message": "invalid token"})])
     with pytest.raises(GhnClientError, match="code=400"):
-        client._get("/api/v1/apiv3/getOrder")  # noqa: SLF001
+        client._get("/api/v1/apiv3/getOrder")
 
 
 def test_exhausted_retries_raise():
     client, session = _client([FakeResponse(429), FakeResponse(429), FakeResponse(429)])
     with pytest.raises(GhnClientError, match="failed after 3 attempts"):
-        client._get("/api/v1/apiv3/getOrder")  # noqa: SLF001
+        client._get("/api/v1/apiv3/getOrder")
     assert session.calls == 3
 
 

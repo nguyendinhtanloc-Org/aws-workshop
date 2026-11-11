@@ -17,18 +17,17 @@ call the create-order route unless you ask (--create).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "lambda", "ingestor"))
-
-try:
+with contextlib.suppress(ImportError):
     from dotenv import load_dotenv
 
     load_dotenv()
-except ImportError:
-    pass
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "lambda", "ingestor"))
 
 from ghn_client import GhnClient, GhnClientError  # noqa: E402
 from mock_source import MockGhnClient  # noqa: E402
@@ -94,7 +93,7 @@ def main() -> int:
                 failures += 1
 
     if args.create:
-        from create_demo_order import build_payload  # noqa: E402  (same dir)
+        from create_demo_order import build_payload  # same dir
         try:
             data = client.create_order(build_payload(1))
             print(f"\n=== create_order: order_code={data.get('order_code')} "

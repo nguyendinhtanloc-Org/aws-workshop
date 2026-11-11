@@ -13,8 +13,8 @@ import argparse
 import hashlib
 import hmac
 import json
+import os
 import random
-import sys
 import time
 import urllib.error
 import urllib.request
@@ -211,7 +211,6 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "generate":
-        import os
         os.makedirs(os.path.dirname(args.output), exist_ok=True)
         print(f"Generating 10,000 orders to {args.output}...")
         res = generate_10k_sample_dataset(args.output)

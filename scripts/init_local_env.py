@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 import sys
-import time
 
 try:
     import boto3
@@ -22,6 +21,7 @@ except ImportError:
 LOCALSTACK_ENDPOINT = os.environ.get("LOCALSTACK_ENDPOINT", "http://localhost:4566")
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://localhost:9000")
 REGION = "ap-southeast-1"
+
 
 # Boto3 client pointing to LocalStack
 def _get_client(service: str, endpoint: str = LOCALSTACK_ENDPOINT):

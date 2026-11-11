@@ -249,7 +249,6 @@ def test_same_attempt_lower_phase_rank_rejected_despite_clock_skew():
     assert table.items[("ORDER#A", "2026-01-01")]["status"] == "in_transit"
 
 
-
 def test_other_errors_are_not_swallowed():
     class BrokenTable:
         def put_item(self, Item: dict[str, Any], ConditionExpression: str) -> None:

@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import os
 import socket
-import ssl
-import urllib.parse
 
 HOSTS = [
     "shippining.1clickdev.com",
@@ -25,7 +23,7 @@ print("=== proxy environment ===")
 for var in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "no_proxy", "all_proxy"):
     if os.environ.get(var):
         print(f"  {var} = {os.environ.get(var)}")
-print("(none set)" if not any(os.environ.get(v) for v in ("http_proxy","https_proxy","HTTP_PROXY","HTTPS_PROXY","all_proxy")) else "")
+print("(none set)" if not any(os.environ.get(v) for v in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy")) else "")
 
 print("\n=== DNS + TCP 443 ===")
 for host in HOSTS:
