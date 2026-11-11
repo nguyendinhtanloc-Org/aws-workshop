@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack, StackProps
-from aws_cdk import aws_iam as iam
 # aws_s3_notifications (not the older aws_lambda_destinations module,
 # whose cross-stack LambdaDestination crashes jsii with
 # "reading 'toString'" when the destination Lambda lives in a
 # different stack than the notification bucket).
-from aws_cdk import aws_s3_notifications as s3n
 from aws_cdk import aws_s3 as s3
+from aws_cdk import aws_s3_notifications as s3n
 from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 

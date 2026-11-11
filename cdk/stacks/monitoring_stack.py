@@ -1,7 +1,7 @@
 """Monitoring stack: CloudWatch dashboards, alarms, SNS alerting, budget."""
 from __future__ import annotations
 
-from aws_cdk import CfnOutput, Duration, Stack, StackProps
+from aws_cdk import CfnOutput, Stack, StackProps
 from aws_cdk import aws_budgets as budgets
 from aws_cdk import aws_cloudwatch as cloudwatch
 from aws_cdk import aws_cloudwatch_actions as cw_actions

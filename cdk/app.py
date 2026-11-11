@@ -2,22 +2,27 @@
 """CDK application entry point for GHN Logistics Analytics Platform."""
 from __future__ import annotations
 
+import contextlib
 import os
 import subprocess
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from aws_cdk import App, Environment, Tags
+from stacks.analytics_stack import AnalyticsStack
+from stacks.base_stack import BaseStack
+from stacks.ingestion_stack import IngestionStack
+from stacks.monitoring_stack import MonitoringStack
+from stacks.processing_stack import ProcessingStack
+from stacks.streaming_stack import StreamingStack
 
 # .env holds the local developer configuration (staging GHN base URL,
 # watchlists, shop id). Real shell exports always win - dotenv only
 # fills in names that are not already set - so CI and explicit
 # `export GHN_...` usage keep full control.
-try:
+with contextlib.suppress(ImportError):
     from dotenv import load_dotenv
 
     load_dotenv()
-except ImportError:
-    pass
 
 # --- Lambda package build ---------------------------------------------------
 # The two Lambdas deploy from build/lambda-* (cross-targeted wheels; see
@@ -44,15 +49,6 @@ def _ensure_lambda_packages() -> None:
 
 
 _ensure_lambda_packages()
-
-from aws_cdk import App, Environment, Tags
-
-from stacks.base_stack import BaseStack
-from stacks.ingestion_stack import IngestionStack
-from stacks.streaming_stack import StreamingStack
-from stacks.processing_stack import ProcessingStack
-from stacks.analytics_stack import AnalyticsStack
-from stacks.monitoring_stack import MonitoringStack
 
 app = App()
 
