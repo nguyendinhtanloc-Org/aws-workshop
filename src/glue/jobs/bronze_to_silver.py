@@ -17,7 +17,7 @@ from awsglue.context import GlueContext
 from awsglue.job import Job
 from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
 
 ARGS = getResolvedOptions(
@@ -50,8 +50,10 @@ ORDER_SCHEMA = (
 def read_bronze_orders() -> DataFrame:
     """Read the order records, unwrapping the ingest envelope."""
     df = spark.read.json(RAW)
+    if "source" in df.columns:
+        df = df.filter((F.col("source") == "orders") | F.col("source").isNull())
     unwrapped = df.select(
-        F.from_json(F.col("record").cast("string"), F.struct(ORDER_SCHEMA)).alias("o")
+        F.from_json(F.to_json(F.col("record")), ORDER_SCHEMA).alias("o")
     ).select("o.*")
     return unwrapped.filter(unwrapped["order_code"].isNotNull())
 
@@ -68,7 +70,8 @@ def apply_silver_rules(df: DataFrame) -> DataFrame:
         "lead_time_hours",
         F.when(
             F.col("delivered_ts").isNotNull() & F.col("created_ts").isNotNull(),
-            (F.col("delivered_ts") - F.col("created_ts")) / (F.lit(1.0) / 24.0),
+            (F.unix_timestamp(F.col("delivered_ts")) - F.unix_timestamp(F.col("created_ts")))
+            / F.lit(3600.0),
         ).cast("double"),
     )
     out = out.withColumn(
@@ -79,7 +82,14 @@ def apply_silver_rules(df: DataFrame) -> DataFrame:
     # is the sensible typo-protection ceiling - anything heavier is a
     # data-entry error, not a parcel.
     out = out.withColumn("weight", F.least(F.col("weight").cast("double"), F.lit(30_000.0)))
-    return out.drop("created_ts", "delivered_ts")
+    # Deduplicate multiple polled snapshots of the same order_code, keeping the latest state.
+    latest_win = Window.partitionBy("order_code").orderBy(
+        F.col("is_delivered").desc(),
+        F.col("delivered_ts").desc_nulls_last(),
+        F.col("created_ts").desc_nulls_last(),
+    )
+    out = out.withColumn("_rn", F.row_number().over(latest_win)).filter(F.col("_rn") == 1)
+    return out.drop("created_ts", "delivered_ts", "_rn")
 
 
 def main() -> None:

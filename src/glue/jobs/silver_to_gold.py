@@ -27,19 +27,20 @@ GOLD = f"s3://{BUCKET}/{ARGS['gold-prefix']}"
 
 
 def read_silver_orders() -> DataFrame:
-    return spark.read.parquet(SILVER)
+    return spark.read.parquet(SILVER).dropDuplicates(["order_code"])
 
 
 def build_daily_kpis() -> DataFrame:
     """Daily delivery KPIs: volume, success rate, lead time, failure rate."""
     df = read_silver_orders()
+    failed_statuses = ("failed", "delivery_fail", "return_fail", "exception", "lost", "damage", "scrap")
     daily = (
         df.groupBy(F.to_date(F.col("created_at")).alias("order_date"))
         .agg(
             F.count("*").alias("total_orders"),
             F.sum(F.col("is_delivered").cast("long")).alias("delivered_orders"),
             F.avg("lead_time_hours").alias("avg_lead_time_hours"),
-            F.sum((F.col("status") == "failed").cast("long")).alias("failed_orders"),
+            F.sum(F.col("status").isin(*failed_statuses).cast("long")).alias("failed_orders"),
         )
         .withColumn(
             "success_rate",
