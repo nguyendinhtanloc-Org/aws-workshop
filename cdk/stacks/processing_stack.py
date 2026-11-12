@@ -1,7 +1,9 @@
 """Processing stack: S3 event -> Lambda Processor -> DynamoDB, with SQS DLQ."""
 from __future__ import annotations
 
-from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack, StackProps
+from typing import Any
+
+from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_s3_notifications as s3n
 from aws_cdk import aws_sqs as sqs
@@ -19,7 +21,7 @@ class ProcessingStack(Stack):
         scope: Construct,
         construct_id: str,
         base: BaseStack,
-        **props: StackProps,
+        **props: Any,
     ) -> None:
         super().__init__(scope, construct_id, **props)
 

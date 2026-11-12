@@ -1,7 +1,9 @@
 """Streaming stack: Kinesis Data Streams + Firehose -> S3 curated."""
 from __future__ import annotations
 
-from aws_cdk import CfnOutput, Duration, Fn, Stack, StackProps
+from typing import Any
+
+from aws_cdk import CfnOutput, Duration, Fn, Stack
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_kinesis as kinesis
 from aws_cdk import aws_kinesisfirehose as firehose
@@ -18,7 +20,7 @@ class StreamingStack(Stack):
         scope: Construct,
         construct_id: str,
         base: BaseStack,
-        **props: StackProps,
+        **props: Any,
     ) -> None:
         super().__init__(scope, construct_id, **props)
 

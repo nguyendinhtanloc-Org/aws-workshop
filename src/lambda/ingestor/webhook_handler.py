@@ -53,7 +53,8 @@ def parse_webhook_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("webhook payload must be a JSON object")
 
-    data = dict(payload.get("data") if "data" in payload and isinstance(payload["data"], dict) else payload)
+    raw_data = payload.get("data")
+    data: dict[str, Any] = dict(raw_data) if isinstance(raw_data, dict) else dict(payload)
 
     # Standardize casing across create, switch_status, and update_weight callbacks
     for pascal, snake in (

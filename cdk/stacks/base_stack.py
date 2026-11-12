@@ -8,7 +8,9 @@ save the NAT gateway's ~$33/month.
 """
 from __future__ import annotations
 
-from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack, StackProps
+from typing import Any
+
+from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_dynamodb as ddb
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_kms as kms
@@ -25,7 +27,7 @@ class BaseStack(Stack):
         scope: Construct,
         construct_id: str,
         with_vpc: bool = False,
-        **props: StackProps,
+        **props: Any,
     ) -> None:
         super().__init__(scope, construct_id, **props)
 

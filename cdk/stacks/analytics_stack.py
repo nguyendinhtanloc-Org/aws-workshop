@@ -1,7 +1,9 @@
 """Analytics stack: Glue Data Catalog, ETL jobs, Athena workgroup."""
 from __future__ import annotations
 
-from aws_cdk import CfnOutput, Duration, Fn, Stack, StackProps
+from typing import Any
+
+from aws_cdk import CfnOutput, Duration, Fn, Stack
 from aws_cdk import aws_athena as athena
 from aws_cdk import aws_events as events
 from aws_cdk import aws_events_targets as targets
@@ -23,7 +25,7 @@ class AnalyticsStack(Stack):
         scope: Construct,
         construct_id: str,
         base: BaseStack,
-        **props: StackProps,
+        **props: Any,
     ) -> None:
         super().__init__(scope, construct_id, **props)
 
@@ -192,12 +194,12 @@ class AnalyticsStack(Stack):
         silver_task = tasks.GlueStartJobRun(
             self,
             "StartSilverJob",
-            glue_job_name=self.etl_job.name,
+            glue_job_name=self.etl_job.name or "ghn-bronze-to-silver",
         )
         gold_task = tasks.GlueStartJobRun(
             self,
             "StartGoldJob",
-            glue_job_name=self.gold_job.name,
+            glue_job_name=self.gold_job.name or "ghn-silver-to-gold",
         )
         # Silver must finish (its Parquet is complete) before gold reads it,
         # so the two tasks run in sequence, not in parallel.

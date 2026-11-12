@@ -160,7 +160,7 @@ def _compute_delivery_attempt(order: dict[str, Any], updated_at: datetime) -> in
             e
             for e in log
             if isinstance(e, dict)
-            and (_parse_ts(e.get("updated_date")) is None or _parse_ts(e.get("updated_date")) < updated_at)
+            and ((ts := _parse_ts(e.get("updated_date"))) is None or ts < updated_at)
         ]
     prior_fails = sum(
         1 for e in prior_entries if isinstance(e, dict) and e.get("status") in ("delivery_fail", "failed")
@@ -184,7 +184,7 @@ def transform_order(order: dict[str, Any]) -> dict[str, Any]:
 
     delivered_at = _parse_ts(order.get("delivered_at"))
     updated_at = _parse_ts(order.get("updated_at")) or delivered_at or created_at
-    lead_time_hours = None
+    lead_time_hours: float | None = None
     if delivered_at is not None:
         lead_time_hours = round((delivered_at - created_at).total_seconds() / 3600, 2)
 

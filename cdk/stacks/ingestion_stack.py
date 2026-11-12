@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
-from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack, StackProps
+from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_events as events
 from aws_cdk import aws_events_targets as targets
 from aws_cdk import aws_iam as iam
@@ -25,7 +26,7 @@ class IngestionStack(Stack):
         construct_id: str,
         base: BaseStack,
         streaming: StreamingStack,
-        **props: StackProps,
+        **props: Any,
     ) -> None:
         super().__init__(scope, construct_id, **props)
 

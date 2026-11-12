@@ -1,7 +1,9 @@
 """Monitoring stack: CloudWatch dashboards, alarms, SNS alerting, budget."""
 from __future__ import annotations
 
-from aws_cdk import CfnOutput, Stack, StackProps
+from typing import Any
+
+from aws_cdk import CfnOutput, Stack
 from aws_cdk import aws_budgets as budgets
 from aws_cdk import aws_cloudwatch as cloudwatch
 from aws_cdk import aws_cloudwatch_actions as cw_actions
@@ -25,7 +27,7 @@ class MonitoringStack(Stack):
         base: BaseStack,
         ingestion: IngestionStack,
         processing: ProcessingStack,
-        **props: StackProps,
+        **props: Any,
     ) -> None:
         super().__init__(scope, construct_id, **props)
 
