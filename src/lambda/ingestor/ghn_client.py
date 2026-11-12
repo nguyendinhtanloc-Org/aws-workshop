@@ -240,9 +240,19 @@ class GhnClient:
         list (GHN_ORDER_CODES). Each response is a single order detail
         object (or a list of them - _as_records accepts both).
         """
+        codes = order_codes or []
+        if not codes:
+            return []
         records: list[dict[str, Any]] = []
-        for code in order_codes or []:
-            payload = self._get(ENDPOINTS["orders"], params={"order_code": code})
-            records.extend(_as_records(payload))
+        last_error: GhnClientError | None = None
+        for code in codes:
+            try:
+                payload = self._get(ENDPOINTS["orders"], params={"order_code": code})
+                records.extend(_as_records(payload))
+            except GhnClientError as exc:
+                last_error = exc
+                logger.warning("failed to fetch order_code=%s: %s", code, exc)
+        if not records and last_error is not None:
+            raise last_error
         return records
 

@@ -12,7 +12,7 @@ import json
 import logging
 import os
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from normaliser import normalise_order
 
@@ -26,7 +26,7 @@ def _client(service: str) -> Any:
     if service not in _clients:
         import boto3
 
-        _clients[service] = boto3.client(service)
+        _clients[service] = cast(Any, boto3).client(service)
     return _clients[service]
 
 
@@ -89,15 +89,18 @@ def parse_webhook_payload(payload: dict[str, Any]) -> dict[str, Any]:
         else:
             data["status"] = "storing"
 
-    # Fallback created_date if missing: prefer first log entry timestamp to keep partition key stable
+    # Fallback created_date if missing: prefer earliest log entry timestamp to keep partition key stable
     if "created_date" not in data and "created_at" not in data:
         log_entries = data.get("log")
-        first_log_ts = (
-            log_entries[0].get("updated_date")
-            if isinstance(log_entries, list) and log_entries and isinstance(log_entries[0], dict)
-            else None
+        log_timestamps = [
+            str(entry["updated_date"])
+            for entry in (log_entries if isinstance(log_entries, list) else [])
+            if isinstance(entry, dict) and entry.get("updated_date")
+        ]
+        earliest_log_ts = min(log_timestamps) if log_timestamps else None
+        data["created_date"] = (
+            earliest_log_ts or data.get("updated_date") or datetime.now(UTC).isoformat()
         )
-        data["created_date"] = first_log_ts or data.get("updated_date") or datetime.now(UTC).isoformat()
 
     return normalise_order(data)
 
@@ -123,34 +126,60 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         logger.error("failed to parse webhook payload: %s", exc)
         return {"statusCode": 400, "body": json.dumps({"error": str(exc)})}
 
-    # 1. Write Raw backup
+    # 1. Write Raw backup in standard batch envelope so Processor can consume it directly
     now = datetime.now(UTC)
     raw_bucket = os.environ.get("RAW_BUCKET_NAME", "ghn-analytics-dev-raw")
-    code = order_record.get("order_code", "UNKNOWN")
+    code = str(order_record.get("order_code", "UNKNOWN"))
     raw_key = f"raw/webhook/{now:%Y-%m-%d}/{code}_{now:%H%M%S%f}.json"
+    envelope = json.dumps(
+        {"source": "orders", "ingested_at": now.isoformat(), "records": [order_record]},
+        ensure_ascii=False,
+        default=str,
+    ).encode("utf-8")
     try:
         _client("s3").put_object(
             Bucket=raw_bucket,
             Key=raw_key,
-            Body=body_bytes,
+            Body=envelope,
             ContentType="application/json",
         )
     except Exception as exc:
         logger.warning("could not write raw webhook backup: %s", exc)
 
-    # 2. Push to SQS FIFO queue if configured
+    # 2. Push to SQS FIFO queue if configured (deterministic deduplication ID)
     sqs_url = os.environ.get("WEBHOOK_SQS_URL", "")
     if sqs_url:
+        dedup_raw = (
+            f"{code}|{order_record.get('status')}|{order_record.get('updated_at')}"
+            f"|{order_record.get('weight')}|{order_record.get('cod_amount')}"
+        )
+        dedup_id = hashlib.sha256(dedup_raw.encode("utf-8")).hexdigest()
         try:
             _client("sqs").send_message(
                 QueueUrl=sqs_url,
                 MessageBody=json.dumps(order_record, ensure_ascii=False, default=str),
                 MessageGroupId=code,
-                MessageDeduplicationId=f"{code}_{order_record.get('status')}_{now.timestamp()}",
+                MessageDeduplicationId=dedup_id,
             )
         except Exception as exc:
             logger.error("failed to forward webhook to SQS: %s", exc)
             return {"statusCode": 500, "body": json.dumps({"error": "queue delivery failed"})}
+
+    # 3. Publish to Kinesis stream if configured so Firehose/Curated receives real-time updates
+    stream_name = os.environ.get("KINESIS_STREAM_NAME", "")
+    if stream_name:
+        try:
+            _client("kinesis").put_record(
+                StreamName=stream_name,
+                Data=json.dumps(
+                    {"source": "orders", "ingested_at": now.isoformat(), "record": order_record},
+                    ensure_ascii=False,
+                    default=str,
+                ).encode("utf-8"),
+                PartitionKey=code,
+            )
+        except Exception as exc:
+            logger.warning("could not publish webhook event to Kinesis: %s", exc)
 
     logger.info("webhook processed successfully for order_code=%s status=%s", code, order_record.get("status"))
     return {"statusCode": 200, "body": json.dumps({"status": "ok", "order_code": code})}

@@ -15,7 +15,8 @@ import json
 import logging
 import os
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
+from urllib.parse import unquote_plus
 
 from ddb_writer import OrderWriter, WriteResult
 from transformer import transform_order
@@ -37,7 +38,7 @@ def _client(service: str) -> Any:
     if service not in _clients:
         import boto3
 
-        _clients[service] = boto3.client(service)
+        _clients[service] = cast(Any, boto3).client(service)
     return _clients[service]
 
 
@@ -55,19 +56,50 @@ def _read_batch(bucket: str, key: str) -> list[dict[str, Any]]:
     body = _client("s3").get_object(Bucket=bucket, Key=key)["Body"].read()
     payload = json.loads(body)
     if isinstance(payload, dict):
-        return list(payload.get("records", []))
+        if "records" in payload and isinstance(payload["records"], list):
+            return list(payload["records"])
+        if "order_code" in payload or "OrderCode" in payload:
+            return [payload]
+        return []
     return list(payload)
 
 
 def _keys_from_event(event: dict[str, Any]) -> list[tuple[str, str]]:
-    """Extract (bucket, key) pairs from an S3 event payload."""
+    """Extract (bucket, key) pairs from an S3 event payload (direct or SQS-wrapped)."""
     keys: list[tuple[str, str]] = []
     for record in event.get("Records", []):
-        try:
-            keys.append((record["s3"]["bucket"]["name"], record["s3"]["object"]["key"]))
-        except KeyError:
-            logger.warning("skipping malformed S3 record: %s", record)
+        if "s3" in record:
+            try:
+                bucket = record["s3"]["bucket"]["name"]
+                key = unquote_plus(record["s3"]["object"]["key"])
+                keys.append((bucket, key))
+            except KeyError:
+                logger.warning("skipping malformed S3 record: %s", record)
+        elif "body" in record:
+            try:
+                inner = json.loads(record["body"])
+            except (ValueError, TypeError):
+                continue
+            if isinstance(inner, dict) and "Records" in inner:
+                keys.extend(_keys_from_event(inner))
     return keys
+
+
+def _direct_orders_from_event(event: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Extract direct order payloads delivered via SQS (e.g. from webhook FIFO queue)."""
+    direct: list[tuple[str, dict[str, Any]]] = []
+    for record in event.get("Records", []):
+        if "s3" in record or "body" not in record:
+            continue
+        try:
+            body = json.loads(record["body"])
+        except (ValueError, TypeError):
+            logger.warning("skipping non-JSON SQS record: %s", record)
+            continue
+        if isinstance(body, dict) and "Records" not in body and "order_code" in body:
+            source = str(record.get("eventSourceARN") or record.get("messageId") or "sqs")
+            direct.append((source, body))
+    return direct
 
 
 def _send_to_dlq(source: str, reason: str, order: dict[str, Any]) -> bool:
@@ -113,10 +145,12 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     stats = {"processed": 0, "written": 0, "duplicates": 0, "failed": 0}
 
     targets = _keys_from_event(event)
-    if not targets:
-        logger.info("no S3 records in event, nothing to process")
+    direct_orders = _direct_orders_from_event(event)
+    if not targets and not direct_orders:
+        logger.info("no S3 or SQS order records in event, nothing to process")
         return stats
 
+    batches: list[tuple[str, list[dict[str, Any]]]] = []
     for bucket, key in targets:
         try:
             orders = _read_batch(bucket, key)
@@ -124,7 +158,12 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             logger.error("cannot read batch bucket=%s key=%s error=%s", bucket, key, exc)
             stats["failed"] += 1
             raise
+        batches.append((f"s3://{bucket}/{key}", orders))
 
+    for source, order in direct_orders:
+        batches.append((source, [order]))
+
+    for source, orders in batches:
         for order in orders:
             stats["processed"] += 1
             try:
@@ -132,7 +171,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             except ValueError as exc:
                 logger.warning("rejecting order error=%s raw=%s", exc, order)
                 stats["failed"] += 1
-                _send_to_dlq(source=f"s3://{bucket}/{key}", reason=str(exc), order=order)
+                _send_to_dlq(source=source, reason=str(exc), order=order)
                 continue
 
             try:
@@ -143,7 +182,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 # let the batch continue.
                 logger.error("write failed order=%s error=%s", order.get("order_code"), exc)
                 stats["failed"] += 1
-                _send_to_dlq(source=f"s3://{bucket}/{key}", reason=str(exc), order=order)
+                _send_to_dlq(source=source, reason=str(exc), order=order)
                 continue
 
             if result is WriteResult.WRITTEN:

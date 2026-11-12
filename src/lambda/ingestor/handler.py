@@ -15,8 +15,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from ghn_client import GhnClient, GhnClientError
 from ingestor_config import get_config
@@ -73,7 +74,7 @@ def _client(service: str) -> Any:
     if service not in _clients:
         import boto3
 
-        _clients[service] = boto3.client(service)
+        _clients[service] = cast(Any, boto3).client(service)
     return _clients[service]
 
 
@@ -191,45 +192,85 @@ def _record_poll_results(poll_codes: list[str], polled_statuses: dict[str, str])
     table_name = os.environ.get("ORDER_WATCHLIST_TABLE", "")
     if not table_name or not poll_codes:
         return
-    now = datetime.now(UTC).isoformat()
+    now_dt = datetime.now(UTC)
+    now = now_dt.isoformat()
+    ttl_7d = int(now_dt.timestamp()) + 7 * 86400
     for code in poll_codes:
         status = polled_statuses.get(code, "")
         if not status:
             continue
         terminal = _terminal(status)
+        update_expr = "SET last_status = :s, updated_at = :t, terminal = :x"
+        expr_vals: dict[str, Any] = {
+            ":s": status,
+            ":t": now,
+            ":x": terminal,
+        }
+        if terminal:
+            update_expr += ", ttl = :ttl"
+            expr_vals[":ttl"] = ttl_7d
         _table_client().update_item(
             TableName=table_name,
             Key={"pk": WATCH_PK, "sk": code},
-            UpdateExpression="SET last_status = :s, updated_at = :t, terminal = :x",
-            ExpressionAttributeValues={
-                ":s": status,
-                ":t": now,
-                ":x": terminal,
-            },
+            UpdateExpression=update_expr,
+            ExpressionAttributeValues=expr_vals,
         )
         if terminal:
             logger.info("order %s reached terminal status %s; no longer polled", code, status)
 
 
 def _publish(source: str, records: list[dict[str, Any]]) -> int:
-    """Publish records to the Kinesis stream. Returns the number sent."""
+    """Publish records to the Kinesis stream in batches of up to 500. Returns the number sent."""
     stream_name = os.environ.get("KINESIS_STREAM_NAME", "")
     if not stream_name or not records:
         return 0
 
+    kinesis = _client("kinesis")
+    now_iso = datetime.now(UTC).isoformat()
+    entries = [
+        {
+            "Data": json.dumps(
+                {"source": source, "ingested_at": now_iso, "record": record},
+                ensure_ascii=False,
+                default=str,
+            ).encode("utf-8"),
+            "PartitionKey": str(record.get("order_code") or record.get("entity") or idx),
+        }
+        for idx, record in enumerate(records)
+    ]
+
+    if not hasattr(kinesis, "put_records"):
+        for entry in entries:
+            kinesis.put_record(
+                StreamName=stream_name,
+                Data=entry["Data"],
+                PartitionKey=entry["PartitionKey"],
+            )
+        return len(entries)
+
     sent = 0
-    for record in records:
-        payload = json.dumps(
-            {"source": source, "ingested_at": datetime.now(UTC).isoformat(), "record": record},
-            ensure_ascii=False,
-            default=str,
-        )
-        _client("kinesis").put_record(
-            StreamName=stream_name,
-            Data=payload.encode("utf-8"),
-            PartitionKey=str(record.get("order_code") or record.get("entity") or sent),
-        )
-        sent += 1
+    for start in range(0, len(entries), 500):
+        pending = entries[start : start + 500]
+        for attempt in range(3):
+            resp = kinesis.put_records(StreamName=stream_name, Records=pending)
+            failed_count = int(resp.get("FailedRecordCount") or 0)
+            if failed_count == 0:
+                sent += len(pending)
+                break
+            results = resp.get("Records") or []
+            retry_batch = [
+                rec for rec, res in zip(pending, results, strict=False) if res.get("ErrorCode")
+            ]
+            sent += len(pending) - len(retry_batch)
+            pending = retry_batch
+            if not pending:
+                break
+            if attempt < 2:
+                time.sleep(0.5 * (2**attempt))
+        if pending:
+            raise RuntimeError(
+                f"Kinesis put_records had {len(pending)} persistent failure(s) for source={source}"
+            )
     return sent
 
 
@@ -293,11 +334,17 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     client = _make_client()
     summary: dict[str, Any] = {"written": {}, "published": {}, "errors": {}}
 
-    order_codes = _load_order_codes()
+    requested_sources = event.get("sources") if isinstance(event, dict) else None
+    active_sources = (
+        tuple(s for s in SOURCES if s in requested_sources)
+        if isinstance(requested_sources, list | tuple) and requested_sources
+        else SOURCES
+    )
+    order_codes = _load_order_codes() if "orders" in active_sources else []
     ward_district_ids = [int(x) for x in _split_csv(os.environ.get("GHN_WARD_DISTRICTS", ""))]
     _polled_orders: list[dict[str, Any]] = []
 
-    for source in SOURCES:
+    for source in active_sources:
         try:
             if source == "master_data":
                 records = client.fetch_master_data(
