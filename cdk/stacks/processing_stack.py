@@ -2,10 +2,6 @@
 from __future__ import annotations
 
 from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack, StackProps
-# aws_s3_notifications (not the older aws_lambda_destinations module,
-# whose cross-stack LambdaDestination crashes jsii with
-# "reading 'toString'" when the destination Lambda lives in a
-# different stack than the notification bucket).
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_s3_notifications as s3n
 from aws_cdk import aws_sqs as sqs
@@ -83,6 +79,10 @@ class ProcessingStack(Stack):
         # Object-key filters are positional NotificationKeyFilter objects,
         # not a keyword argument (this CDK version's signature is
         # add_event_notification(event, destination, *filters)).
+        # Uses aws_s3_notifications (not the older aws_lambda_destinations
+        # module, whose cross-stack LambdaDestination crashes jsii with
+        # "reading 'toString'" when the destination Lambda lives in a
+        # different stack than the notification bucket).
         raw.add_event_notification(
             s3.EventType.OBJECT_CREATED,
             s3n.LambdaDestination(self.processor),
