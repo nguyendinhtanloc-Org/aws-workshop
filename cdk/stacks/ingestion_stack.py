@@ -98,14 +98,21 @@ class IngestionStack(Stack):
         # DynamoDB grant is read + write.
         base.watchlist_table.grant_read_write_data(self.ingestor)
 
-        # --- EventBridge: every 5 minutes ---------------------------------
+        # --- EventBridge: every 5 minutes (orders + shipping_status only) -
         self.schedule = events.Rule(
             self,
             "IngestSchedule",
             schedule=events.Schedule.rate(Duration.minutes(5)),
-            description="Poll GHN API for orders, shipping status, and master data",
+            description="Poll GHN API for orders and shipping status",
         )
-        self.schedule.add_target(targets.LambdaFunction(self.ingestor))
+        self.schedule.add_target(
+            targets.LambdaFunction(
+                self.ingestor,
+                event=events.RuleTargetInput.from_object(
+                    {"sources": ["orders", "shipping_status"]}
+                ),
+            )
+        )
 
         # --- Master data refresh: daily -----------------------------------
         self.master_data_schedule = events.Rule(
@@ -116,7 +123,12 @@ class IngestionStack(Stack):
             schedule=events.Schedule.cron(hour="2", minute="0"),
             description="Daily refresh of provinces, districts, wards",
         )
-        self.master_data_schedule.add_target(targets.LambdaFunction(self.ingestor))
+        self.master_data_schedule.add_target(
+            targets.LambdaFunction(
+                self.ingestor,
+                event=events.RuleTargetInput.from_object({"sources": ["master_data"]}),
+            )
+        )
 
         CfnOutput(self, "IngestorFunctionName", value=self.ingestor.function_name)
         CfnOutput(self, "IngestorArn", value=self.ingestor.function_arn)

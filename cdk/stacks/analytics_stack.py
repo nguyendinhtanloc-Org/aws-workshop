@@ -144,7 +144,7 @@ class AnalyticsStack(Stack):
             },
             glue_version="4.0",
             worker_type="G.1X",
-            number_of_workers=1,
+            number_of_workers=2,
             # CfnJob L1 takes timeout as a plain number of minutes, not a
             # Duration.
             timeout=30,
@@ -175,7 +175,7 @@ class AnalyticsStack(Stack):
             },
             glue_version="4.0",
             worker_type="G.1X",
-            number_of_workers=1,
+            number_of_workers=2,
             # CfnJob L1 takes timeout as a plain number of minutes, not a
             # Duration.
             timeout=30,

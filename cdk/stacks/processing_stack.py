@@ -39,7 +39,7 @@ class ProcessingStack(Stack):
             code_path="build/lambda-processor",
             timeout=Duration.minutes(2),
             memory_size=1024,
-            reserved_concurrent_executions=5,
+            reserved_concurrent_executions=20,
             dead_letter_queue=self.processing_dlq,
             environment={
                 "ORDERS_TABLE_NAME": base.orders_table.table_name,
@@ -87,6 +87,11 @@ class ProcessingStack(Stack):
             s3.EventType.OBJECT_CREATED,
             s3n.LambdaDestination(self.processor),
             s3.NotificationKeyFilter(prefix="raw/orders/"),
+        )
+        raw.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3n.LambdaDestination(self.processor),
+            s3.NotificationKeyFilter(prefix="raw/webhook/"),
         )
 
         CfnOutput(self, "ProcessorFunctionName", value=self.processor.function_name)

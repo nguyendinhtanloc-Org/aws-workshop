@@ -126,6 +126,7 @@ class BaseStack(Stack):
             sort_key=ddb.Attribute(name="sk", type=ddb.AttributeType.STRING),
             billing_mode=ddb.BillingMode.PAY_PER_REQUEST,
             point_in_time_recovery=True,
+            time_to_live_attribute="ttl",
             encryption=ddb.TableEncryption.AWS_MANAGED,
             removal_policy=RemovalPolicy.RETAIN,
         )
@@ -143,6 +144,7 @@ class BaseStack(Stack):
             sort_key=ddb.Attribute(name="sk", type=ddb.AttributeType.STRING),
             billing_mode=ddb.BillingMode.PAY_PER_REQUEST,
             point_in_time_recovery=True,
+            time_to_live_attribute="ttl",
             encryption=ddb.TableEncryption.AWS_MANAGED,
             removal_policy=RemovalPolicy.RETAIN,
         )
