@@ -7,23 +7,25 @@ GHN API and turns it into operational dashboards.
 
 ```mermaid
 flowchart LR
-  API[GHN API] --> ING[Lambda Ingestor]
-  ING --> RAW[(S3 Raw)]
-  RAW --> FH[Kinesis Firehose]
-  FH --> CUR[(S3 Curated)]
-  CUR --> PROC[Lambda Processor]
+  WH[GHN Webhook] --> APIGW[API Gateway]
+  APIGW --> RECV[Webhook Receiver]
+  RECV --> RAW[(S3 Raw)]
+  RECV --> FIFO[("SQS FIFO")]
+  RECV --> BRZ[(S3 Bronze)]
+  FIFO --> PROC[Lambda Processor]
   PROC --> DDB[(DynamoDB)]
   PROC --> DLQ[SQS DLQ]
-  CUR --> GLUE[Glue ETL]
-  GLUE --> ATH[Athena]
-  ATH --> QS[QuickSight]
-  ING --> CW[CloudWatch + SNS]
+  BRZ --> MERGE[Athena v3 MERGE]
+  MERGE --> SIL[(Iceberg silver/gold)]
+  SIL --> QS[QuickSight]
+  RECV --> CW[CloudWatch + SNS]
   PROC --> CW
 ```
 
-Each layer has one source of truth: S3 raw is the durable backup, S3 curated
-is the analytics source of truth, DynamoDB is the real-time lookup, and SQS
-DLQ holds everything that failed.
+Each layer has one source of truth: S3 raw is the durable backup, S3 bronze is
+the analytics input, the Iceberg silver/gold tables are the analytical source
+of truth, DynamoDB is the real-time lookup, and SQS DLQ holds everything that
+failed.
 
 ## Repository layout
 
