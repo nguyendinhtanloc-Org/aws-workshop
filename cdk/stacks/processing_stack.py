@@ -1,11 +1,10 @@
-"""Processing stack: S3 event -> Lambda Processor -> DynamoDB, with SQS DLQ."""
+"""Processing stack: SQS FIFO events into DynamoDB."""
 from __future__ import annotations
 
 from typing import Any
 
 from aws_cdk import CfnOutput, Duration, RemovalPolicy, Stack
-from aws_cdk import aws_s3 as s3
-from aws_cdk import aws_s3_notifications as s3n
+from aws_cdk import aws_lambda_event_sources as event_sources
 from aws_cdk import aws_sqs as sqs
 from cdk_constructs.lambda_function import PipelineLambdaFunction
 from constructs import Construct
@@ -21,6 +20,7 @@ class ProcessingStack(Stack):
         scope: Construct,
         construct_id: str,
         base: BaseStack,
+        webhook_queue: sqs.IQueue,
         **props: Any,
     ) -> None:
         super().__init__(scope, construct_id, **props)
@@ -55,46 +55,14 @@ class ProcessingStack(Stack):
         base.orders_table.grant_read_write_data(self.processor)
         base.curated_bucket.grant_read(self.processor)
         self.processing_dlq.grant_send_messages(self.processor)
+        # One message per invocation lets a failure retry without replaying
+        # other FIFO messages. The event source also grants consume permissions.
+        self.processor.add_event_source(
+            event_sources.SqsEventSource(webhook_queue, batch_size=1)
+        )
 
-        # --- Trigger: S3 notification on the raw bucket -------------------
-        # Processing is event-driven: a new raw order object triggers a run.
-        # Only the orders prefix is wired, so master data batches do not
-        # trigger the Processor.
-        #
-        # The notification is attached to a *name-imported* reference to the
-        # raw bucket, not to base.raw_bucket itself. The bucket lives in the
-        # base stack while this Processor lives here; calling
-        # add_event_notification on the base-constructed bucket would put the
-        # notification's custom resource in the base stack, which then has to
-        # reference this stack's Lambda ARN - a base -> processing
-        # dependency that collides with processing -> base and makes synth
-        # fail with a cyclic reference. Importing by physical name keeps the
-        # whole notification (custom resource + Lambda permission) in this
-        # stack; the ordering is already guaranteed by
-        # processing.add_dependency(base) in app.py.
-        raw = s3.Bucket.from_bucket_name(
-            self,
-            "RawBucket",
-            base.raw_bucket.bucket_name,
-        )
-        raw.grant_read(self.processor)
-        # Object-key filters are positional NotificationKeyFilter objects,
-        # not a keyword argument (this CDK version's signature is
-        # add_event_notification(event, destination, *filters)).
-        # Uses aws_s3_notifications (not the older aws_lambda_destinations
-        # module, whose cross-stack LambdaDestination crashes jsii with
-        # "reading 'toString'" when the destination Lambda lives in a
-        # different stack than the notification bucket).
-        raw.add_event_notification(
-            s3.EventType.OBJECT_CREATED,
-            s3n.LambdaDestination(self.processor),
-            s3.NotificationKeyFilter(prefix="raw/orders/"),
-        )
-        raw.add_event_notification(
-            s3.EventType.OBJECT_CREATED,
-            s3n.LambdaDestination(self.processor),
-            s3.NotificationKeyFilter(prefix="raw/webhook/"),
-        )
+        # Explicit replay of legacy S3 batches still needs read access.
+        base.raw_bucket.grant_read(self.processor)
 
         CfnOutput(self, "ProcessorFunctionName", value=self.processor.function_name)
         CfnOutput(self, "ProcessingDLQUrl", value=self.processing_dlq.queue_url)
