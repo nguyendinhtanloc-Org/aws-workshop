@@ -1,4 +1,4 @@
-"""Integration test: S3 raw landing -> curated -> DynamoDB.
+"""Integration test: S3 raw landing -> DynamoDB.
 
 Uses moto to stand in for AWS so the test runs locally and in CI without
 touching a real account. Marked `integration`; skipped unless AWS_ENDPOINT_URL
@@ -27,21 +27,27 @@ def test_ingestion_to_dynamodb_roundtrip():
     ddb = boto3.resource("dynamodb", endpoint_url=endpoint)
 
     bucket = "ghn-test-raw"
-    ddb.create_table(
-        TableName="ghn-test-orders",
-        KeySchema=[
-            {"AttributeName": "pk", "KeyType": "HASH"},
-            {"AttributeName": "sk", "KeyType": "RANGE"},
-        ],
-        AttributeDefinitions=[
-            {"AttributeName": "pk", "AttributeType": "S"},
-            {"AttributeName": "sk", "AttributeType": "S"},
-        ],
-        BillingMode="PAY_PER_REQUEST",
-    )
+    try:
+        ddb.create_table(
+            TableName="ghn-test-orders",
+            KeySchema=[
+                {"AttributeName": "pk", "KeyType": "HASH"},
+                {"AttributeName": "sk", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "pk", "AttributeType": "S"},
+                {"AttributeName": "sk", "AttributeType": "S"},
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+    except Exception:
+        pass
 
     order = {"order_code": "GHN-IT-001", "created_at": "2026-01-01T00:00:00Z", "status": "pending"}
-    s3.create_bucket(Bucket=bucket)
+    try:
+        s3.create_bucket(Bucket=bucket)
+    except Exception:
+        pass
     s3.put_object(
         Bucket=bucket,
         Key="raw/orders/2026-01-01/x.json",
