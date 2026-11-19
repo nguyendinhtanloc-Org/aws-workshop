@@ -8,6 +8,8 @@ import os
 import sys
 from unittest.mock import patch
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 import webhook_handler
@@ -65,12 +67,8 @@ def test_created_date_never_uses_callback_time(monkeypatch):
     assert callback.get("created_date") is None
     assert parse_webhook_payload(enriched)["created_at"] == "2026-11-16T08:00:00Z"
     detail.assert_called_once_with(order_codes=["GHN123"])
-    try:
+    with pytest.raises(ValueError, match="created_at"):
         parse_webhook_payload(callback)
-    except ValueError as exc:
-        assert "created_at" in str(exc)
-    else:
-        assert False, "callback Time was incorrectly used as creation time"
 
 
 def test_parse_webhook_payload_pascal_case():
