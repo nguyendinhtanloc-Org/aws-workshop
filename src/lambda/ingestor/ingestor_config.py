@@ -1,15 +1,4 @@
-"""Configuration loader for the Ingestor.
-
-Supports two modes so the same code runs locally and in AWS:
-
-- **Local** (no `GHN_SECRET_ARN` set): the token comes from the
-  `GHN_API_TOKEN` environment variable, which `scripts/` and `.env` set.
-- **AWS** (`GHN_SECRET_ARN` set): the token comes from Secrets Manager.
-
-Configuration is resolved lazily via :func:`get_config` rather than at
-import time, so importing this module never performs an AWS call. That
-keeps unit tests and local scripts free of network dependencies.
-"""
+"""Configuration loader for the Ingestor."""
 from __future__ import annotations
 
 import contextlib
@@ -18,10 +7,12 @@ import os
 from functools import lru_cache
 from typing import Any
 
-with contextlib.suppress(ImportError):  # pragma: no cover - dotenv absent in Lambda runtime
+from ghn_client import GhnClient
+
+with contextlib.suppress(ImportError):
     from dotenv import load_dotenv
 
-    load_dotenv()  # no-op if no .env file is present
+    load_dotenv()
 
 
 def _from_secrets_manager(secret_arn: str) -> str:
@@ -54,29 +45,27 @@ def get_token() -> str:
 
 @lru_cache(maxsize=1)
 def get_config() -> dict[str, Any]:
-    """Return the configuration the Ingestor needs.
-
-    Cached because it may perform a Secrets Manager call. Call
-    ``get_config.cache_clear()`` if the environment changes mid-process.
-
-    The gateway is the bare GHN host (not the /shiip/public-api docs
-    portal). ``GHN_SHOP_ID`` is the second auth header the current
-    gateway generation requires; it is optional in the mock and in
-    generation v3, where only the token was sent.
-    """
+    """Return the configuration the Ingestor needs."""
     return {
         "ghn_token": get_token(),
         "ghn_base_url": os.environ.get("GHN_BASE_URL", "https://online-gateway.ghn.vn"),
         "ghn_shop_id": os.environ.get("GHN_SHOP_ID", ""),
-        # The API has no list-orders route, so the Ingestor polls a
-        # seed watchlist of order codes (comma separated). For a live
-        # shop this watchlist grows as orders are created; status
-        # *changes* themselves arrive by webhook (docs/runbook.md).
-        "ghn_order_codes": os.environ.get("GHN_ORDER_CODES", ""),
-        # The ward endpoint only answers per district, so fetch wards
-        # for this bounded list of district ids only (comma separated).
         "ghn_ward_district_ids": os.environ.get("GHN_WARD_DISTRICTS", ""),
         "raw_bucket": os.environ.get("RAW_BUCKET_NAME", "ghn-analytics-dev-raw"),
-        "kinesis_stream": os.environ.get("KINESIS_STREAM_NAME", ""),
         "log_level": os.environ.get("LOG_LEVEL", "INFO"),
     }
+
+
+def make_client() -> Any:
+    """Build a GHN client for master data or reconciliation."""
+    if os.environ.get("GHN_MOCK", "").lower() in ("1", "true", "yes"):
+        from mock_source import MockGhnClient
+
+        return MockGhnClient()
+
+    config = get_config()
+    return GhnClient(
+        token=config["ghn_token"],
+        base_url=config["ghn_base_url"],
+        shop_id=config["ghn_shop_id"],
+    )

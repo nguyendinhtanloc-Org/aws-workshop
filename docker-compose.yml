@@ -1,15 +1,16 @@
 services:
   localstack:
-    image: localstack/localstack:latest
+    image: localstack/localstack:3.8.0
     container_name: ghn-localstack
     ports:
       - "4566:4566"
     environment:
-      - SERVICES=s3,dynamodb,sqs,secretsmanager
+      - SERVICES=s3,dynamodb,sqs,secretsmanager,lambda,iam,logs
+      - LAMBDA_DOCKER_NETWORK=aws-workshop_default
       - AWS_DEFAULT_REGION=ap-southeast-1
       - DOCKER_HOST=unix:///var/run/docker.sock
     volumes:
-      - "./.localstack:/var/lib/localstack"
+      - localstack-data:/var/lib/localstack
       - "/var/run/docker.sock:/var/run/docker.sock"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
@@ -18,7 +19,7 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio:latest
+    image: coollabsio/minio:latest
     container_name: ghn-minio
     ports:
       - "9000:9000"
@@ -28,15 +29,16 @@ services:
       - MINIO_ROOT_PASSWORD=password123
     command: server /data --console-address ":9001"
     volumes:
-      - "./.minio_data:/data"
+      - minio-data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 5s
       timeout: 5s
       retries: 5
 
   iceberg-rest:
     image: tabulario/iceberg-rest:latest
+    user: "0:0"
     container_name: ghn-iceberg-rest
     depends_on:
       - minio
@@ -48,10 +50,13 @@ services:
       - AWS_REGION=ap-southeast-1
       - CATALOG_WAREHOUSE=s3://warehouse/
       - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
-      - CATALOG_S3__ENDPOINT=http://minio:9000
-      - CATALOG_S3__PATH__STYLE__ACCESS=true
+      - CATALOG_S3_ENDPOINT=http://minio:9000
+      - CATALOG_S3_PATH__STYLE__ACCESS=true
+      - CATALOG_URI=jdbc:sqlite:/catalog/catalog.db
+    volumes:
+      - iceberg-catalog:/catalog
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8181/v1/config"]
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8181'"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -71,3 +76,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+volumes:
+  localstack-data:
+  minio-data:
+  iceberg-catalog:
+
+networks:
+  default:
+    name: aws-workshop_default

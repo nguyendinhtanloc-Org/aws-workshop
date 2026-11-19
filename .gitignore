@@ -246,3 +246,7 @@ dist/
 # local scratch
 pytest_shim.py
 **/pytest_shim.py
+
+# Workspace-only verification tools
+.tools/
+.local_staging_orders.jsonl

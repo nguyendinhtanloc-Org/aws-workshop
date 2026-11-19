@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import sys
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
@@ -32,12 +33,53 @@ def test_verify_signature_missing():
     assert verify_signature(body, None, secret) is False
 
 
+def test_verify_signature_missing_secret_fails_closed():
+    assert verify_signature(b"{}", "any", "") is False
+
+
+def test_shared_token_auth_valid_invalid_missing(monkeypatch):
+    monkeypatch.setenv("GHN_WEBHOOK_AUTH_MODE", "shared_token")
+    monkeypatch.setenv("GHN_CALLBACK_SHARED_TOKEN", "private")
+    assert webhook_handler._authorized({"x-ghn-webhook-token": "private"}, b"{}") == (True, True)
+    assert webhook_handler._authorized({"x-ghn-webhook-token": "wrong"}, b"{}") == (True, False)
+    assert webhook_handler._authorized({}, b"{}") == (True, False)
+    monkeypatch.delenv("GHN_CALLBACK_SHARED_TOKEN")
+    assert webhook_handler._authorized({}, b"{}") == (False, False)
+
+
+def test_missing_secret_and_bad_base64_return_error(monkeypatch):
+    monkeypatch.setenv("GHN_WEBHOOK_AUTH_MODE", "shared_token")
+    monkeypatch.delenv("GHN_CALLBACK_SHARED_TOKEN", raising=False)
+    assert webhook_handler.lambda_handler({"headers": {}, "body": "{}"}, None)["statusCode"] == 503
+    monkeypatch.setenv("GHN_CALLBACK_SHARED_TOKEN", "private")
+    assert webhook_handler.lambda_handler({"headers": {}, "body": "%%%", "isBase64Encoded": True}, None)["statusCode"] == 400
+
+
+def test_created_date_never_uses_callback_time(monkeypatch):
+    monkeypatch.setenv("GHN_BASE_URL", "https://dev-online-gateway.ghn.vn")
+    monkeypatch.setenv("GHN_API_TOKEN", "placeholder")
+    monkeypatch.setenv("GHN_SHOP_ID", "123")
+    callback = {"OrderCode": "GHN123", "Type": "create", "Time": "2026-11-17T04:49:47Z", "Status": "ready_to_pick"}
+    with patch("ghn_client.GhnClient.fetch_orders", return_value=[{"created_date": "2026-11-16T08:00:00Z"}]) as detail:
+        enriched = webhook_handler._enrich_created_date(callback)
+    assert callback.get("created_date") is None
+    assert parse_webhook_payload(enriched)["created_at"] == "2026-11-16T08:00:00Z"
+    detail.assert_called_once_with(order_codes=["GHN123"])
+    try:
+        parse_webhook_payload(callback)
+    except ValueError as exc:
+        assert "created_at" in str(exc)
+    else:
+        assert False, "callback Time was incorrectly used as creation time"
+
+
 def test_parse_webhook_payload_pascal_case():
     payload = {
         "OrderCode": "GHN9988",
         "Status": "delivering",
         "Type": "switch_status",
         "Time": "2026-11-10T08:00:00Z",
+        "CreatedDate": "2026-11-09T22:00:00Z",
         "TotalFee": 32000,
         "CODAmount": 250000,
         "ToName": "Nguyen Van A",
@@ -61,6 +103,7 @@ def test_parse_webhook_payload_update_weight():
         "OrderCode": "GHN9989",
         "Type": "update_weight",
         "Time": "2026-11-10T09:00:00Z",
+        "CreatedDate": "2026-11-09T22:00:00Z",
         "Weight": 1500,
         "ConvertedWeight": 1800,
     }
@@ -93,7 +136,7 @@ def test_lambda_handler_success():
         os.environ["GHN_WEBHOOK_SECRET"] = "mysecret"
         os.environ["WEBHOOK_SQS_URL"] = "https://sqs/webhook.fifo"
 
-        body = json.dumps({"OrderCode": "ORDER1", "Status": "delivering"}).encode()
+        body = json.dumps({"OrderCode": "ORDER1", "Status": "delivering", "CreatedDate": "2026-11-09T22:00:00Z"}).encode()
         sig = hmac.new(b"mysecret", body, hashlib.sha256).hexdigest()
 
         event = {

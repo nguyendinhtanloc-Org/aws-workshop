@@ -1,26 +1,10 @@
-"""A deterministic fake GHN API, for local runs and for the workshop demo.
-
-The real GHN API is not always reachable from a laptop - the hosts have
-changed between API generations and corporate networks and VPNs often
-block them. This module produces records in exactly the shape the real
-API returns, so the whole pipeline (ingest -> S3 -> Kinesis -> Lambda ->
-DynamoDB -> Glue -> Athena) can be exercised without it.
-
-The generated data is deliberately imperfect: some records are missing
-required fields, some carry an unknown status. That is what exercises
-the quarantine path, the Decimal conversion and the status
-normalisation in the normal way. Weights are integers in grams, per
-GHN's API conventions.
-"""
+"""A deterministic fake GHN API, for local runs and for the workshop demo."""
 from __future__ import annotations
 
 import random
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-# Master data in the shape the GHN API actually returns (confirmed 200s
-# from /master-data/province and /master-data/district on the dev
-# gateway): PascalCase keys, and a district carries its province.
 PROVINCES = [
     {"ProvinceID": 79, "ProvinceName": "Hồ Chí Minh", "Code": "44", "CountryID": 1},
     {"ProvinceID": 20, "ProvinceName": "Hà Nội", "Code": "4", "CountryID": 1},
@@ -43,7 +27,6 @@ WARDS = [
     for i in (2, 3, 5, 6, 8, 9)
 ]
 
-# GHN's real status values, from the docs' "Order Status Codes" page.
 STATUSES = [
     "ready_to_pick",
     "picking",
@@ -72,11 +55,7 @@ STATUSES = [
 
 
 class MockGhnClient:
-    """Stands in for GhnClient, returning generated data.
-
-    The interface matches GhnClient exactly: fetch_master_data,
-    fetch_orders and fetch_shipping_status.
-    """
+    """Stands in for GhnClient, returning generated data."""
 
     def __init__(
         self,
@@ -91,12 +70,7 @@ class MockGhnClient:
         self._rng = random.Random(seed)
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Mimic the client's GET interface for the probe script.
-
-        Matches on the last path segment so it works for both the
-        legacy apiv3 names (getProvinces) and the current generation
-        (provinces).
-        """
+        """Mimic the client's GET interface for the probe script."""
         segment = path.rstrip("/").rsplit("/", 1)[-1].lower()
         if segment in ("province", "provinces", "getprovinces"):
             return {"code": 200, "data": PROVINCES}
@@ -111,10 +85,7 @@ class MockGhnClient:
     def fetch_master_data(
         self, ward_district_ids: list[int] | None = None
     ) -> list[dict[str, Any]]:
-        """Provinces, districts and wards as one flat record list, in the
-        real API's PascalCase shape. When ward_district_ids is given,
-        only wards for those districts are included - mirroring the
-        real client's bounded per-district ward lookups."""
+        """Return mock provinces, districts and wards for the requested districts."""
         records: list[dict[str, Any]] = []
         for entity, items in (("province", PROVINCES), ("district", DISTRICTS)):
             for item in items:
@@ -130,13 +101,7 @@ class MockGhnClient:
         order_codes: list[str] | None = None,
         count: int = 12,
     ) -> list[dict[str, Any]]:
-        """Generate a batch of orders, some of them deliberately broken.
-
-        When order_codes is given (the real watchlist path), one detail
-        record per code is generated in the GHN detail response's field
-        style (order_code, status, created_date, weight, cod_amount) -
-        the Ingestor normalises those, exactly like the live API path.
-        """
+        """Generate a batch of orders, some of them deliberately broken."""
         if order_codes:
             return [
                 self._make_detail(i, code, broken=(i % 7 in (3, 5)))
@@ -174,12 +139,10 @@ class MockGhnClient:
                 created + timedelta(hours=self._rng.randint(6, 72))
             ).isoformat()
         if broken:
-            # Deliberate imperfections, so the pipeline's error handling is
-            # actually exercised rather than assumed.
             if index % 2:
-                record["status"] = "teleported"  # unknown status
+                record["status"] = "teleported"
             else:
-                record.pop("order_code")  # missing required field
+                record.pop("order_code")
         return record
 
     def create_order(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -199,13 +162,10 @@ class MockGhnClient:
         order: dict[str, Any] = {
             "order_id": str(900_000 + index),
             "order_code": code,
-            # Master data arrives PascalCase from the API; the Ingestor
-            # mapping layer turns it into the internal names.
             "from_province_id": self._rng.choice(PROVINCES)["ProvinceID"],
             "from_district_id": self._rng.randint(1, 9),
             "to_province_id": self._rng.choice(PROVINCES)["ProvinceID"],
             "to_district_id": self._rng.randint(1, 9),
-            # GHN's convention is grams, not kilograms.
             "weight": self._rng.randint(500, 20_000),
             "status": status,
             "created_at": created.isoformat(),
@@ -217,15 +177,12 @@ class MockGhnClient:
                 created + timedelta(hours=self._rng.randint(6, 72))
             ).isoformat()
         else:
-            # Not yet delivered: no delivered_at.
             order["delivered_at"] = None
 
-        # Deliberate imperfections, so the pipeline's error handling is
-        # actually exercised rather than assumed.
         if index % 7 == 3:
-            order.pop("to_province_id")          # missing required field
+            order.pop("to_province_id")
         elif index % 7 == 5:
-            order["status"] = "teleported"        # unknown status
+            order["status"] = "teleported"
         return order
 
     def fetch_shipping_status(self, count: int = 8) -> list[dict[str, Any]]:

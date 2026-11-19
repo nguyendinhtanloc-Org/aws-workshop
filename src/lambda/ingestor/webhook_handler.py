@@ -1,8 +1,4 @@
-"""GHN Webhook Receiver Lambda Handler.
-
-Handles incoming Webhook events pushed by GHN (e.g. create, switch_status, update_weight).
-Verifies HMAC signature, writes raw event to S3 Raw, and routes to SQS FIFO queue.
-"""
+"""GHN webhook handler shared by API Gateway and the local HTTP receiver."""
 from __future__ import annotations
 
 import base64
@@ -31,10 +27,9 @@ def _client(service: str) -> Any:
 
 
 def verify_signature(body: bytes, signature: str | None, secret: str) -> bool:
-    """Verify incoming HMAC-SHA256 signature from GHN."""
+    """Verify the optional HMAC simulator contract, not a GHN guarantee."""
     if not secret:
-        # If no secret configured (local dev/testing), permit
-        return True
+        return False
     if not signature:
         return False
     computed = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
@@ -42,21 +37,13 @@ def verify_signature(body: bytes, signature: str | None, secret: str) -> bool:
 
 
 def parse_webhook_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Normalize a GHN Webhook callback payload.
-
-    GHN Webhook payload usually carries:
-    - OrderCode / order_code
-    - Status / status
-    - Time / updated_date / created_date
-    - Type / event_type (e.g. "switch_status")
-    """
+    """Normalize a GHN Webhook callback payload."""
     if not isinstance(payload, dict):
         raise ValueError("webhook payload must be a JSON object")
 
     raw_data = payload.get("data")
     data: dict[str, Any] = dict(raw_data) if isinstance(raw_data, dict) else dict(payload)
 
-    # Standardize casing across create, switch_status, and update_weight callbacks
     for pascal, snake in (
         ("OrderCode", "order_code"),
         ("ClientOrderCode", "client_order_code"),
@@ -82,7 +69,6 @@ def parse_webhook_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if pascal in data:
             data.setdefault(snake, data.pop(pascal))
 
-    # For update_weight events that may omit Status, infer from log or default to storing
     if not data.get("status") and str(data.get("event_type", "")).lower() == "update_weight":
         log_entries = data.get("log")
         if isinstance(log_entries, list) and log_entries and isinstance(log_entries[-1], dict):
@@ -90,44 +76,102 @@ def parse_webhook_payload(payload: dict[str, Any]) -> dict[str, Any]:
         else:
             data["status"] = "storing"
 
-    # Fallback created_date if missing: prefer earliest log entry timestamp to keep partition key stable
-    if "created_date" not in data and "created_at" not in data:
-        log_entries = data.get("log")
-        log_timestamps = [
-            str(entry["updated_date"])
-            for entry in (log_entries if isinstance(log_entries, list) else [])
-            if isinstance(entry, dict) and entry.get("updated_date")
-        ]
-        earliest_log_ts = min(log_timestamps) if log_timestamps else None
-        data["created_date"] = (
-            earliest_log_ts or data.get("updated_date") or datetime.now(UTC).isoformat()
-        )
-
     return normalise_order(data)
+
+
+def _enrich_created_date(payload: dict[str, Any]) -> dict[str, Any]:
+    """Use GHN order detail; callback Time is the event time, not creation time."""
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    if data.get("CreatedDate") or data.get("created_date") or data.get("created_at"):
+        return payload
+    code = data.get("OrderCode") or data.get("order_code")
+    if not code:
+        raise ValueError("missing OrderCode")
+    token = os.environ.get("GHN_API_TOKEN", "")
+    shop = os.environ.get("GHN_SHOP_ID", "")
+    base = os.environ.get("GHN_BASE_URL", "")
+    if not token or not shop or base.rstrip("/") != "https://dev-online-gateway.ghn.vn":
+        raise RuntimeError("staging order-detail credentials are not configured")
+    from ghn_client import GhnClient
+
+    records = GhnClient(token=token, base_url=base, shop_id=shop).fetch_orders(order_codes=[str(code)])
+    if not records or not records[0].get("created_date"):
+        raise RuntimeError("order detail has no created_date")
+    enriched = dict(payload)
+    if data is payload:
+        enriched["created_date"] = records[0]["created_date"]
+    else:
+        enriched["data"] = {**data, "created_date": records[0]["created_date"]}
+    return enriched
+
+
+def _authorized(headers: dict[str, str], body: bytes) -> tuple[bool, bool]:
+    """Return (configured, authorized)."""
+    mode = os.environ.get("GHN_WEBHOOK_AUTH_MODE", "hmac").lower()
+    if mode == "shared_token":
+        secret = os.environ.get("GHN_CALLBACK_SHARED_TOKEN", "")
+        if not secret:
+            return False, False
+        provided = headers.get("x-ghn-webhook-token", "")
+        return True, bool(provided) and hmac.compare_digest(provided, secret)
+    if mode == "hmac":
+        secret = os.environ.get("GHN_WEBHOOK_SECRET", "")
+        if os.environ.get("GHN_WEBHOOK_SECRET_ARN"):
+            secret = _client("secretsmanager").get_secret_value(
+                SecretId=os.environ["GHN_WEBHOOK_SECRET_ARN"]
+            )["SecretString"]
+        if not secret:
+            return False, False
+        return True, verify_signature(body, headers.get("x-ghn-signature") or headers.get("signature"), secret)
+    return False, False
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """API Gateway Lambda proxy integration handler for GHN Webhooks."""
     headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
-    secret = os.environ.get("GHN_WEBHOOK_SECRET", "")
-    signature = headers.get("x-ghn-signature") or headers.get("signature")
-
     raw_body = event.get("body", "")
     is_base64 = event.get("isBase64Encoded", False)
-    body_bytes = base64.b64decode(raw_body) if is_base64 else (raw_body.encode("utf-8") if isinstance(raw_body, str) else b"")
-
-    if not verify_signature(body_bytes, signature, secret):
-        logger.warning("invalid webhook signature received")
-        return {"statusCode": 401, "body": json.dumps({"error": "invalid signature"})}
+    try:
+        body_bytes = base64.b64decode(raw_body, validate=True) if is_base64 else (
+            raw_body.encode("utf-8") if isinstance(raw_body, str) else b""
+        )
+    except (ValueError, TypeError):
+        return {"statusCode": 400, "body": json.dumps({"error": "invalid base64 body"})}
+    try:
+        configured, authorized = _authorized(headers, body_bytes)
+    except Exception:
+        logger.exception("webhook authentication configuration failed")
+        return {"statusCode": 503, "body": json.dumps({"error": "authentication unavailable"})}
+    if not configured:
+        logger.error("webhook authentication is not configured")
+        return {"statusCode": 503, "body": json.dumps({"error": "authentication not configured"})}
+    if not authorized:
+        logger.warning("webhook authentication failed")
+        return {"statusCode": 401, "body": json.dumps({"error": "unauthorized"})}
 
     try:
         payload = json.loads(body_bytes.decode("utf-8") if body_bytes else "{}")
-        order_record = parse_webhook_payload(payload)
-    except Exception as exc:
-        logger.error("failed to parse webhook payload: %s", exc)
+        if not isinstance(payload, dict):
+            raise ValueError("webhook payload must be a JSON object")
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return {"statusCode": 400, "body": json.dumps({"error": "invalid JSON object"})}
+    try:
+        payload_for_normalisation = _enrich_created_date(payload) if os.environ.get("GHN_WEBHOOK_ENRICH_FROM_DETAIL") == "1" else payload
+        order_record = parse_webhook_payload(payload_for_normalisation)
+    except ValueError as exc:
+        logger.warning("invalid webhook order: %s", exc)
         return {"statusCode": 400, "body": json.dumps({"error": str(exc)})}
+    except Exception:
+        logger.exception("order-detail enrichment failed")
+        return {"statusCode": 503, "body": json.dumps({"error": "order detail unavailable"})}
 
-    # 1. Write Raw backup in standard batch envelope so Processor can consume it directly
+    try:
+        from watchlist import register_order
+        register_order(str(order_record["order_code"]))
+    except Exception:
+        logger.exception("watchlist registration failed")
+        return {"statusCode": 500, "body": json.dumps({"error": "watchlist unavailable"})}
+
     now = datetime.now(UTC)
     raw_bucket = os.environ.get("RAW_BUCKET_NAME", "ghn-analytics-dev-raw")
     code = str(order_record.get("order_code", "UNKNOWN"))
@@ -146,8 +190,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         )
     except Exception as exc:
         logger.warning("could not write raw webhook backup: %s", exc)
+        return {"statusCode": 500, "body": json.dumps({"error": "raw backup failed"})}
 
-    # 2. Push to SQS FIFO queue if configured (deterministic deduplication ID)
     sqs_url = os.environ.get("WEBHOOK_SQS_URL", "")
     if sqs_url:
         dedup_raw = (
@@ -161,27 +205,15 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 MessageBody=json.dumps(order_record, ensure_ascii=False, default=str),
                 MessageGroupId=code,
                 MessageDeduplicationId=dedup_id,
+                MessageAttributes={
+                    "source": {"DataType": "String", "StringValue": "ghn_webhook"},
+                    "ingest_time": {"DataType": "String", "StringValue": now.isoformat()},
+                },
             )
         except Exception as exc:
             logger.error("failed to forward webhook to SQS: %s", exc)
             return {"statusCode": 500, "body": json.dumps({"error": "queue delivery failed"})}
 
-    # 3. Publish to Kinesis stream if configured so Firehose/Curated receives real-time updates
-    stream_name = os.environ.get("KINESIS_STREAM_NAME", "")
-    if stream_name:
-        try:
-            _client("kinesis").put_record(
-                StreamName=stream_name,
-                Data=json.dumps(
-                    {"source": "orders", "ingested_at": now.isoformat(), "record": order_record},
-                    ensure_ascii=False,
-                    default=str,
-                ).encode("utf-8"),
-                PartitionKey=code,
-            )
-        except Exception as exc:
-            logger.warning("could not publish webhook event to Kinesis: %s", exc)
-
-    logger.info("webhook processed successfully for order_code=%s status=%s", code, order_record.get("status"))
+    logger.info("webhook processed order_code=%s type=%s result=ok", code, order_record.get("event_type"))
     return {"statusCode": 200, "body": json.dumps({"status": "ok", "order_code": code})}
 

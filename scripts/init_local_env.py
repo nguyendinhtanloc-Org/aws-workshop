@@ -1,16 +1,9 @@
-#!/usr/bin/env python3
-"""Initialize local AWS resources on LocalStack and MinIO for testing.
-
-This script provisions:
-- S3 buckets (raw, curated, warehouse)
-- DynamoDB tables (orders, watchlist, state checkpoint)
-- SQS DLQ
-- Secrets Manager secret for GHN API token
-"""
+"""Initialize local AWS resources on LocalStack and MinIO for testing."""
 from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 try:
     import boto3
@@ -18,12 +11,18 @@ except ImportError:
     print("boto3 is required: pip install boto3")
     sys.exit(1)
 
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    pass
+else:
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
 LOCALSTACK_ENDPOINT = os.environ.get("LOCALSTACK_ENDPOINT", "http://localhost:4566")
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://localhost:9000")
 REGION = "ap-southeast-1"
 
 
-# Boto3 client pointing to LocalStack
 def _get_client(service: str, endpoint: str = LOCALSTACK_ENDPOINT):
     return boto3.client(
         service,
@@ -37,7 +36,7 @@ def _get_client(service: str, endpoint: str = LOCALSTACK_ENDPOINT):
 def init_s3():
     print("--> Initializing S3 buckets on LocalStack...")
     s3 = _get_client("s3")
-    buckets = ["ghn-analytics-local-raw", "ghn-analytics-local-curated"]
+    buckets = ["ghn-analytics-local-raw"]
     for b in buckets:
         try:
             s3.create_bucket(
@@ -51,23 +50,24 @@ def init_s3():
             else:
                 print(f"  [-] Failed to create {b}: {e}")
 
-    # MinIO bucket for Iceberg warehouse
     print("--> Initializing MinIO warehouse bucket...")
     s3_minio = boto3.client(
         "s3",
         endpoint_url=MINIO_ENDPOINT,
         region_name=REGION,
-        aws_access_key_id="admin",
-        aws_secret_access_key="password123",
+        aws_access_key_id=os.environ.get("MINIO_ACCESS_KEY", "admin"),
+        aws_secret_access_key=os.environ.get("MINIO_SECRET_KEY", "password123"),
     )
-    try:
-        s3_minio.create_bucket(Bucket="warehouse")
-        print("  [+] Created MinIO bucket 'warehouse'")
-    except Exception as e:
-        if "BucketAlreadyOwnedByYou" in str(e) or "BucketAlreadyExists" in str(e):
-            print("  [*] MinIO bucket 'warehouse' already exists")
-        else:
-            print(f"  [-] MinIO bucket creation failed (is MinIO running?): {e}")
+    from botocore.exceptions import ClientError
+
+    for bucket in dict.fromkeys(("warehouse", os.environ.get("MINIO_BRONZE_BUCKET", "ghn-analytics-bronze"))):
+        try:
+            s3_minio.head_bucket(Bucket=bucket)
+        except ClientError as exc:
+            if exc.response["ResponseMetadata"]["HTTPStatusCode"] != 404:
+                raise
+            s3_minio.create_bucket(Bucket=bucket)
+        print(f"  [+] MinIO bucket '{bucket}' is ready")
 
 
 def init_dynamodb():
@@ -124,12 +124,24 @@ def init_sqs():
         print(f"  [-] Failed to create FIFO queue {fifo_name}: {e}")
 
 
+def verify_webhook_resources():
+    """Make the command fail when required LocalStack resources are absent."""
+    s3 = _get_client("s3")
+    ddb = _get_client("dynamodb")
+    sqs = _get_client("sqs")
+    s3.head_bucket(Bucket="ghn-analytics-local-raw")
+    ddb.describe_table(TableName="ghn-analytics-local-watchlist")
+    sqs.get_queue_url(QueueName="ghn-analytics-local-webhook.fifo")
+    print("  [+] Webhook resources verified on LocalStack")
+
+
 def main():
     print("=== GHN Logistics: Local Test Harness Initialization ===")
     try:
         init_s3()
         init_dynamodb()
         init_sqs()
+        verify_webhook_resources()
         print("\nAll local resources initialized successfully!")
     except Exception as exc:
         print(f"\nInitialization failed (ensure Docker containers are up): {exc}")

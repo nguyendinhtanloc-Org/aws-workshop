@@ -74,11 +74,32 @@ cp .env.example .env      # then paste your token into GHN_API_TOKEN
 python3 scripts/test_api.py        # read-only probe of every endpoint
 ```
 
-`scripts/test_api.py` never writes to S3, Kinesis or DynamoDB. It just calls
+`scripts/test_api.py` never writes to S3 or DynamoDB. It just calls
 the API and prints the records, so you can confirm the token, the field
 names and the record shapes before anything is deployed.
 
+For a GHN staging order and a real callback through an HTTPS tunnel into
+LocalStack, follow [the local webhook guide](docs/GHN_STAGING_LOCAL_WEBHOOK.md).
+
 ### Local configuration
+
+To run the Processor as a Lambda triggered automatically by LocalStack SQS:
+
+```bash
+docker compose up -d
+python scripts/init_local_env.py
+python scripts/deploy_processor_local.py
+python scripts/test_processor_lambda_local.py
+```
+
+The Lambda writes Orders to DynamoDB and archives events to MinIO Bronze
+(JSON objects and an Iceberg table committed through Trino). It does not write
+to curated. Stop `scripts/run_processor_local.py` while the Lambda mapping is
+enabled. Run deployment again after changing Processor code. The verification
+script leaves one uniquely named test order and its Bronze event for inspection.
+Failed messages retry through SQS and move to the processor FIFO DLQ after five
+receives. LocalStack 3.8 Community resources are ephemeral across container
+recreation, so rerun initialization and deployment afterwards.
 
 `.env` holds local-only settings and is gitignored. The Ingestor reads
 its token from `GHN_API_TOKEN` when `GHN_SECRET_ARN` is unset, and from

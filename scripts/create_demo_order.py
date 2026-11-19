@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Create demo shipping orders through the GHN API, for the Ingestor to poll.
-
-The current GHN API has no list-orders route, so a shop's order codes
-enter the pipeline by being created here (or by your own shop's sales).
-Each created code should be appended to GHN_ORDER_CODES so the scheduled
-Ingestor run picks it up.
+"""Create demo shipping orders for webhook and reconciliation testing.
 
 Usage:
     python3 scripts/create_demo_order.py            # one demo order
@@ -19,7 +14,9 @@ import json
 import os
 import sys
 import time
+import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 
 with contextlib.suppress(ImportError):
     from dotenv import load_dotenv
@@ -31,7 +28,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from ghn_client import GhnClient, GhnClientError
 
 
-def build_payload(index: int) -> dict:
+def build_payload(index: int, client_order_code: str | None = None) -> dict:
     """A valid create-order payload in GHN's documented field names.
 
     Address names come from the master-data catalogues (Get Province /
@@ -64,7 +61,7 @@ def build_payload(index: int) -> dict:
         "content": f"Demo order {index} - test parcel",
         # idempotency: re-running never creates a duplicate for the same
         # client_order_code; GHN returns the previously created code.
-        "client_order_code": f"DEMO-{int(time.time())}-{index}",
+        "client_order_code": client_order_code or f"DEMO-{int(time.time())}-{index}-{uuid.uuid4().hex[:6]}",
         "cod_amount": 0,
     }
 
@@ -73,6 +70,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--count", type=int, default=1, help="how many orders to create")
     parser.add_argument("--dry-run", action="store_true", help="print the payload without calling the API")
+    parser.add_argument("--client-order-code", help="reuse this exact code when retrying one order")
     parser.add_argument(
         "--host",
         default=None,
@@ -80,65 +78,71 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.count < 1 or (args.client_order_code and args.count != 1):
+        parser.error("--count must be positive; --client-order-code requires --count 1")
+
     if args.dry_run:
-        print(json.dumps(build_payload(1), ensure_ascii=False, indent=2))
+        print(json.dumps(build_payload(1, args.client_order_code), ensure_ascii=True, indent=2))
         return 0
 
     token = os.environ.get("GHN_API_TOKEN", "")
     shop = os.environ.get("GHN_SHOP_ID", "")
-    base = args.host or os.environ.get("GHN_BASE_URL", "https://online-gateway.ghn.vn")
+    base = args.host or os.environ.get("GHN_BASE_URL", "")
+    if base.rstrip("/") != "https://dev-online-gateway.ghn.vn":
+        print("ERROR: create_demo_order only permits the GHN staging gateway", file=sys.stderr)
+        return 1
     if not token or not shop:
         print("ERROR: set GHN_API_TOKEN and GHN_SHOP_ID in .env", file=sys.stderr)
         return 1
-    print(f"target: {base} (shop {shop}) - staging tokens need the dev gateway")
+    print(f"target: {base} (shop {shop})")
 
     client = GhnClient(token=token, base_url=base, shop_id=shop)
     created: list[str] = []
+    records: list[dict[str, str]] = []
     for i in range(1, args.count + 1):
+        payload = build_payload(i, args.client_order_code)
         try:
-            data = client.create_order(build_payload(i))
+            data = client.create_order(payload)
         except GhnClientError as exc:
-            print(f"[{i}] failed: {exc}", file=sys.stderr)
+            print(f"[{i}] failed for client_order_code={payload['client_order_code']}: {exc}", file=sys.stderr)
             continue
         code = data.get("order_code", "?")
         created.append(code)
-        print(f"[{i}] created {code}  fee={data.get('total_fee')}  eta={data.get('expected_delivery_time')}")
+        records.append({"order_code": code, "client_order_code": payload["client_order_code"], "created_request_at": datetime.now(UTC).isoformat()})
+        print(f"[{i}] order_code={code} client_order_code={payload['client_order_code']} fee={data.get('total_fee')}")
 
     if not created:
         return 1
 
-    # Preferred path: register the new codes directly in the DynamoDB
-    # order-watchlist table (the Ingestor polls it and self-maintains
-    # terminal-state rows, so no redeploy is ever needed for new orders).
-    table_name = os.environ.get("ORDER_WATCHLIST_TABLE", "")
-    registered = False
-    if table_name:
-        try:
-            import boto3
+    output = Path(__file__).resolve().parents[1] / ".local_staging_orders.jsonl"
+    with output.open("a", encoding="utf-8") as stream:
+        for record in records:
+            stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+    print(f"Order codes saved to {output.name}")
 
-            ddb = boto3.resource("dynamodb")
-            table = ddb.Table(table_name)
-            now = datetime.now(UTC).isoformat()
-            with table.batch_writer() as batch:
-                for code in created:
-                    batch.put_item(
-                        Item={
-                            "pk": "#WATCH",
-                            "sk": code,
-                            "terminal": False,
-                            "registered_at": now,
-                            "updated_at": now,
-                        }
-                    )
+    # Let reconciliation find these test orders even if a callback is missed.
+    table_name = os.environ.get("LOCAL_WATCHLIST_TABLE_NAME", "ghn-analytics-local-watchlist")
+    registered = False
+    endpoint = os.environ.get("LOCALSTACK_ENDPOINT", "http://localhost:4566").rstrip("/")
+    if endpoint.startswith(("http://localhost:", "http://127.0.0.1:")):
+        try:
+            from watchlist import register_order
+
+            os.environ["AWS_ENDPOINT_URL"] = endpoint
+            os.environ["AWS_DEFAULT_REGION"] = "ap-southeast-1"
+            os.environ["AWS_ACCESS_KEY_ID"] = "test"
+            os.environ["AWS_SECRET_ACCESS_KEY"] = "test"
+            os.environ["ORDER_WATCHLIST_TABLE"] = table_name
+            for code in created:
+                register_order(code)
             registered = True
-            print(f"registered {len(created)} code(s) in {table_name} - the Ingestor picks them up on its next run.")
+            print(f"registered {len(created)} code(s) in {table_name} for reconciliation.")
         except Exception as exc:  # pragma: no cover - depends on AWS creds
-            print(f"warning: could not register in {table_name} ({exc}); fall back to .env below", file=sys.stderr)
+            print(f"warning: could not register in {table_name} ({exc})", file=sys.stderr)
 
     print()
     if not registered:
-        print("No watchlist table available. Append these to GHN_ORDER_CODES in .env instead:")
-        print(f"  GHN_ORDER_CODES={','.join(created)}")
+        print("Watchlist registration unavailable. An accepted webhook will register the order.")
     return 0
 
 

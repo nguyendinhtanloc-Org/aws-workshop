@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """CDK application entry point for GHN Logistics Analytics Platform."""
 from __future__ import annotations
 
@@ -13,25 +12,12 @@ from stacks.base_stack import BaseStack
 from stacks.ingestion_stack import IngestionStack
 from stacks.monitoring_stack import MonitoringStack
 from stacks.processing_stack import ProcessingStack
-from stacks.streaming_stack import StreamingStack
 
-# .env holds the local developer configuration (staging GHN base URL,
-# watchlists, shop id). Real shell exports always win - dotenv only
-# fills in names that are not already set - so CI and explicit
-# `export GHN_...` usage keep full control.
 with contextlib.suppress(ImportError):
     from dotenv import load_dotenv
 
     load_dotenv()
 
-# --- Lambda package build ---------------------------------------------------
-# The two Lambdas deploy from build/lambda-* (cross-targeted wheels; see
-# scripts/build_lambdas.py). build/ is gitignored, so it vanishes after a
-# git clean / fresh clone - running `cdk diff` / `cdk deploy` from a bare
-# checkout would then crash at synth with "Lambda code dir not found".
-# Rebuild automatically instead of making every developer remember the
-# manual step. scripts/build_lambdas.py is idempotent and fast when the
-# packages are already current.
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _LAMBDA_PACKAGES = ("build/lambda-ingestor", "build/lambda-processor")
 
@@ -57,7 +43,6 @@ env = Environment(
     region=os.environ.get("CDK_DEFAULT_REGION", "ap-southeast-1"),
 )
 
-# --- Shared context -------------------------------------------------------
 project = app.node.try_get_context("project") or "ghn-analytics"
 env_name = app.node.try_get_context("env") or "dev"
 
@@ -67,35 +52,22 @@ tags.add("Environment", env_name)
 tags.add("ManagedBy", "cdk")
 tags.add("Owner", "de-team")
 
-# --- Stacks (dependency order) -------------------------------------------
-# --minimal: deploy the ingest path only (base + streaming + ingestion +
-# processing - S3, Kinesis, the two Lambdas, DynamoDB). Skip the Glue/
-# Athena analytics stack and the monitoring stack: cheapest way to
-# prove the pipeline end to end; deploy them later with a full run.
 minimal = "--minimal" in sys.argv[1:]
 
-# The VPC (with its NAT gateway, ~$33/mo) only exists when the Glue
-# analytics stack is deployed; minimal deploys skip it entirely.
 base = BaseStack(app, f"{project}-{env_name}-base", with_vpc=not minimal, env=env, description="Shared S3 buckets, KMS, IAM (+ VPC with the analytics stack)")
 
-streaming = StreamingStack(
-    app, f"{project}-{env_name}-streaming", env=env, base=base,
-    description="Kinesis Data Streams + Firehose buffering + S3 curated",
-)
-
 ingestion = IngestionStack(
-    app, f"{project}-{env_name}-ingestion", env=env, base=base, streaming=streaming,
-    description="GHN API ingestion: Lambda + EventBridge + S3 raw + Kinesis publish",
+    app, f"{project}-{env_name}-ingestion", env=env, base=base,
+    description="GHN API ingestion: Lambda + EventBridge + S3 raw",
 )
 
 processing = ProcessingStack(
     app, f"{project}-{env_name}-processing", env=env, base=base,
+    webhook_queue=ingestion.webhook_queue,
     description="Lambda processor + DynamoDB + SQS DLQ",
 )
 
-streaming.add_dependency(base)
 ingestion.add_dependency(base)
-ingestion.add_dependency(streaming)
 processing.add_dependency(base)
 
 if not minimal:

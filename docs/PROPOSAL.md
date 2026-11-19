@@ -187,7 +187,7 @@ Luật này được áp dụng giống hệt ở ba nơi, để DynamoDB và b�
 | Processor -> DynamoDB | `pk=ORDER#{code}`, `sk={created_date}` + conditional put | Trả `DUPLICATE`, không ghi dòng thứ hai |
 | Bronze -> `order_events` | `event_id` | `WHEN NOT MATCHED`, số dòng không đổi |
 | Bronze -> `orders` | `ROW_NUMBER()` + `MERGE` có điều kiện | Giữ bản ghi ưu tiên cao nhất |
-| Firehose -> curated | Tự nhiên at-least-once | Glue/Athena dedup khi merge |
+| Raw -> analytics | Pending | Athena/Iceberg path replaces the removed stream |
 
 ### 5.4. Quản lý dữ liệu
 
@@ -304,7 +304,7 @@ Những mục dưới đây đã có code hoặc tài liệu nhưng chưa đư�
 | **Reconciliation job** | Chưa có | Lambda 03:00 đọc watchlist, poll đối soát, đẩy vào FIFO (D6-D7) |
 | **Fencing lease + batch hash** | Chưa có | Chống 2 process tranh chấp poll; short-circuit khi payload không đổi (D8-D9) |
 | **Athena Iceberg trên CDK** | SQL có trong `sql/`, chưa có stack tương ứng | `AnalyticsStack` hiện tại còn là Glue PySpark - cần chuyển sang Athena `MERGE` theo ADR 005 |
-| **Firehose / Streaming stack** | Đang có | ADR 005 bỏ Firehose - cần chốt giữ hay bỏ để khớp chi phí mục 9 |
+| **Streaming stack** | Removed 2026-11-18 | No Kinesis/Firehose; complete the Athena/Iceberg ingestion path separately |
 | **Gold KPI SQL** | `silver_to_gold.py` (Glue) và `sql/` chưa khớp nhau | Một nguồn duy nhất cho `gold.delivery_kpis`, gắn với định nghĩa KPI ở mục 6 |
 | **QuickSight** | Thư mục `quicksight/` rỗng | Export dashboard dưới dạng code (D12-D13 của Member 5) |
 
