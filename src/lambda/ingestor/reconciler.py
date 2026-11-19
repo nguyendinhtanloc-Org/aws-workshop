@@ -68,13 +68,14 @@ def acquire(
     from botocore.exceptions import ClientError
 
     try:
-        return table.update_item(
+        lease: dict[str, Any] = table.update_item(
             Key={"pk": "#RECON", "sk": code},
             UpdateExpression="SET owner_id=:o, expires_at=:e ADD fencing_token :one",
             ConditionExpression="attribute_not_exists(expires_at) OR expires_at < :now",
             ExpressionAttributeValues={":o": owner, ":e": now + seconds, ":now": now, ":one": 1},
             ReturnValues="ALL_NEW",
         )["Attributes"]
+        return lease
     except ClientError as exc:
         if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
             return None
