@@ -40,6 +40,11 @@ def build(name: str, source_dir: Path) -> Path:
     for py in sorted(source_dir.glob("*.py")):
         shutil.copy2(py, out / py.name)
 
+    shutil.copytree(
+        ROOT / "src" / "shared", out / "shared",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+
     reqs = source_dir / "requirements.txt"
     if reqs.exists():
         print(f"[{name}] pip install (linux/amd64...aarch64, cp312) -> {out.relative_to(ROOT)}/")
