@@ -81,7 +81,8 @@ def parse_webhook_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _enrich_created_date(payload: dict[str, Any]) -> dict[str, Any]:
     """Use GHN order detail; callback Time is the event time, not creation time."""
-    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    nested = payload.get("data")
+    data = nested if isinstance(nested, dict) else payload
     if data.get("CreatedDate") or data.get("created_date") or data.get("created_at"):
         return payload
     code = data.get("OrderCode") or data.get("order_code")
