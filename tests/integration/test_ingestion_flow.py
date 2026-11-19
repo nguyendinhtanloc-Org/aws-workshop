@@ -6,6 +6,7 @@ is set to a local stack.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 
@@ -27,7 +28,7 @@ def test_ingestion_to_dynamodb_roundtrip():
     ddb = boto3.resource("dynamodb", endpoint_url=endpoint)
 
     bucket = "ghn-test-raw"
-    try:
+    with contextlib.suppress(Exception):
         ddb.create_table(
             TableName="ghn-test-orders",
             KeySchema=[
@@ -40,14 +41,10 @@ def test_ingestion_to_dynamodb_roundtrip():
             ],
             BillingMode="PAY_PER_REQUEST",
         )
-    except Exception:
-        pass
 
     order = {"order_code": "GHN-IT-001", "created_at": "2026-01-01T00:00:00Z", "status": "pending"}
-    try:
+    with contextlib.suppress(Exception):
         s3.create_bucket(Bucket=bucket)
-    except Exception:
-        pass
     s3.put_object(
         Bucket=bucket,
         Key="raw/orders/2026-01-01/x.json",

@@ -26,7 +26,7 @@ with contextlib.suppress(ImportError):
     load_dotenv(ROOT / ".env")
 
 sys.path.insert(0, str(ROOT / "src" / "lambda" / "ingestor"))
-from ghn_client import STAGING_BASE_URL, GhnClient, GhnClientError
+from ghn_client import STAGING_BASE_URL, GhnClient, GhnClientError  # noqa: E402
 
 
 def main() -> int:

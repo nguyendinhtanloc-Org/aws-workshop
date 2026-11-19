@@ -9,9 +9,8 @@ import zipfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from dotenv import load_dotenv
-
 from build_lambdas import build
+from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -62,17 +61,23 @@ def main() -> None:
     })
     client = _get_client("lambda")
     name = "ghn-analytics-local-processor"
-    config = dict(Role=role["Arn"], Runtime="python3.12", Handler="handler.lambda_handler",
-                  Timeout=120, MemorySize=1024, Environment={"Variables": {
-                      "ORDERS_TABLE_NAME": "ghn-analytics-local-orders",
-                      "AWS_ENDPOINT_URL": "http://localstack:4566",
-                      "MINIO_ENDPOINT": "http://minio:9000",
-                      "MINIO_ACCESS_KEY": os.environ.get("MINIO_ACCESS_KEY", "admin"),
-                      "MINIO_SECRET_KEY": os.environ.get("MINIO_SECRET_KEY", "password123"),
-                      "MINIO_BRONZE_BUCKET": os.environ.get("MINIO_BRONZE_BUCKET", "ghn-analytics-bronze"),
-                      "TRINO_ENDPOINT": "http://trino:8080",
-                      "BRONZE_ICEBERG_TABLE": os.environ.get("BRONZE_ICEBERG_TABLE", "ghn_events"),
-                  }})
+    config = {
+        "Role": role["Arn"],
+        "Runtime": "python3.12",
+        "Handler": "handler.lambda_handler",
+        "Timeout": 120,
+        "MemorySize": 1024,
+        "Environment": {"Variables": {
+            "ORDERS_TABLE_NAME": "ghn-analytics-local-orders",
+            "AWS_ENDPOINT_URL": "http://localstack:4566",
+            "MINIO_ENDPOINT": "http://minio:9000",
+            "MINIO_ACCESS_KEY": os.environ.get("MINIO_ACCESS_KEY", "admin"),
+            "MINIO_SECRET_KEY": os.environ.get("MINIO_SECRET_KEY", "password123"),
+            "MINIO_BRONZE_BUCKET": os.environ.get("MINIO_BRONZE_BUCKET", "ghn-analytics-bronze"),
+            "TRINO_ENDPOINT": "http://trino:8080",
+            "BRONZE_ICEBERG_TABLE": os.environ.get("BRONZE_ICEBERG_TABLE", "ghn_events"),
+        }},
+    }
     try:
         client.get_function(FunctionName=name)
     except client.exceptions.ResourceNotFoundException:

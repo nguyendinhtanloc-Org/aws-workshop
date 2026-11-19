@@ -9,8 +9,8 @@ Receiving increments their receive count; use this against the local demo queue.
 """
 from __future__ import annotations
 
-import gzip
 import argparse
+import gzip
 import json
 import os
 import sys

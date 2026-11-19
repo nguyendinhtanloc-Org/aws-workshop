@@ -23,7 +23,7 @@ with contextlib.suppress(ImportError):
     load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src" / "lambda" / "ingestor"))
-import webhook_handler  # noqa: E402
+import webhook_handler
 
 MAX_BODY_BYTES = 1024 * 1024
 REGION = "ap-southeast-1"

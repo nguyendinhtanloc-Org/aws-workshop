@@ -78,7 +78,7 @@ def main() -> int:
     try:
         s3.head_bucket(Bucket=bucket)
         watchlist = ddb.Table(table_name)
-        watchlist.table_status
+        watchlist.load()
         queue_url = sqs.get_queue_url(QueueName=queue_name)["QueueUrl"]
     except Exception as exc:
         raise SystemExit(
