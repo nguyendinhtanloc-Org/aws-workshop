@@ -167,8 +167,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             raise
         batches.append((f"s3://{bucket}/{key}", orders, None))
 
-    for source, order, message in direct_orders:
-        batches.append((source, [order], message))
+    for source, order, direct_message in direct_orders:
+        batches.append((source, [order], direct_message))
 
     for source, orders, message in batches:
         for order in orders:
