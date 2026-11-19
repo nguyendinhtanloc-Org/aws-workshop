@@ -32,7 +32,7 @@ class FakeSession:
 def _client(responses: list[FakeResponse]) -> tuple[GhnClient, FakeSession]:
     client = GhnClient(token="secret-token")
     session = FakeSession(responses)
-    client._session = session  # test seam
+    client._session = session
     return client, session
 
 
@@ -80,8 +80,7 @@ def test_exhausted_retries_raise():
 
 
 def test_fetch_master_data_flattens_entities():
-    """Province + district come from one call each; wards are fetched
-    per district when district ids are supplied."""
+    """Province + district come from one call each; wards are fetched per district when district ids are supplied."""
     client, session = _client(
         [
             FakeResponse(200, {"code": 200, "data": [{"province_id": 1}]}),
@@ -91,7 +90,6 @@ def test_fetch_master_data_flattens_entities():
     )
     records = client.fetch_master_data(ward_district_ids=[2])
     assert [r["entity"] for r in records] == ["province", "district", "ward"]
-    # ward request carried the required district_id param
     assert session.calls == 3
 
 
@@ -108,8 +106,7 @@ def test_fetch_master_data_without_districts_skips_ward_calls():
 
 
 def test_fetch_orders_polls_by_code():
-    """The API has no list-orders route: one call per code, each with
-    the required order_code query param (snake_case, confirmed live)."""
+    """Fetch each watchlist order using its order_code query parameter."""
     client, session = _client(
         [
             FakeResponse(200, {"code": 200, "data": {"order_code": "C1", "status": "picked"}}),
@@ -119,7 +116,6 @@ def test_fetch_orders_polls_by_code():
     records = client.fetch_orders(order_codes=["C1", "C2"])
     assert [r["order_code"] for r in records] == ["C1", "C2"]
     assert records[0]["status"] == "picked"
-    # the confirmed live param name is snake_case, not the Go struct name
     assert session.last_params == {"order_code": "C2"}
 
 
