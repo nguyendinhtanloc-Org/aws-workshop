@@ -2,7 +2,7 @@
 
 Contract
 --------
-Input  : S3 event (curated bucket) or a scheduled invocation.
+Input  : S3 event or SQS event containing a normalized order.
 Output : one DynamoDB item per order, plus failed records routed to the DLQ.
 
 Idempotency: writes use a composite primary key (order_code, ingest_date)
@@ -14,10 +14,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any, cast
 from urllib.parse import unquote_plus
 
+from bronze import write_order
 from ddb_writer import OrderWriter, WriteResult
 from transformer import transform_order
 
@@ -25,7 +27,6 @@ logger = logging.getLogger()
 logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
 
 ORDERS_TABLE = os.environ.get("ORDERS_TABLE_NAME", "ghn-analytics-dev-orders")
-CURATED_BUCKET = os.environ.get("CURATED_BUCKET_NAME", "ghn-analytics-dev-curated")
 DLQ_URL = os.environ.get("DLQ_URL", "")
 
 # boto3 clients are created on first use rather than at import time, so
@@ -85,20 +86,28 @@ def _keys_from_event(event: dict[str, Any]) -> list[tuple[str, str]]:
     return keys
 
 
-def _direct_orders_from_event(event: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+def _direct_orders_from_event(
+    event: dict[str, Any],
+) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
     """Extract direct order payloads delivered via SQS (e.g. from webhook FIFO queue)."""
-    direct: list[tuple[str, dict[str, Any]]] = []
+    direct: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
     for record in event.get("Records", []):
         if "s3" in record or "body" not in record:
             continue
         try:
             body = json.loads(record["body"])
         except (ValueError, TypeError):
-            logger.warning("skipping non-JSON SQS record: %s", record)
+            if record.get("eventSource") == "aws:sqs":
+                raise ValueError("SQS message body must contain valid JSON") from None
+            logger.warning("skipping non-JSON SQS record")
             continue
         if isinstance(body, dict) and "Records" not in body and "order_code" in body:
             source = str(record.get("eventSourceARN") or record.get("messageId") or "sqs")
-            direct.append((source, body))
+            direct.append((source, body, record))
+        elif record.get("eventSource") == "aws:sqs" and (
+            not isinstance(body, dict) or not _keys_from_event(body)
+        ):
+            raise ValueError("SQS message must contain an order or an S3 notification")
     return direct
 
 
@@ -136,11 +145,8 @@ def _send_to_dlq(source: str, reason: str, order: dict[str, Any]) -> bool:
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    """Process every S3 object referenced by the event.
-
-    A scheduled invocation (no S3 records) processes the previous
-    processing window, so a missed S3 notification still gets recovered.
-    """
+    """Process S3 batches and SQS orders; SQS handles retries and redrive."""
+    from_sqs = any(record.get("eventSource") == "aws:sqs" for record in event.get("Records", []))
     writer = OrderWriter(_table())
     stats = {"processed": 0, "written": 0, "duplicates": 0, "failed": 0}
 
@@ -150,7 +156,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         logger.info("no S3 or SQS order records in event, nothing to process")
         return stats
 
-    batches: list[tuple[str, list[dict[str, Any]]]] = []
+    bronze_bucket = os.environ.get("MINIO_BRONZE_BUCKET")
+    batches: list[tuple[str, list[dict[str, Any]], dict[str, Any] | None]] = []
     for bucket, key in targets:
         try:
             orders = _read_batch(bucket, key)
@@ -158,25 +165,36 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             logger.error("cannot read batch bucket=%s key=%s error=%s", bucket, key, exc)
             stats["failed"] += 1
             raise
-        batches.append((f"s3://{bucket}/{key}", orders))
+        batches.append((f"s3://{bucket}/{key}", orders, None))
 
-    for source, order in direct_orders:
-        batches.append((source, [order]))
+    for source, order, message in direct_orders:
+        batches.append((source, [order], message))
 
-    for source, orders in batches:
+    for source, orders, message in batches:
         for order in orders:
             stats["processed"] += 1
             try:
                 item = transform_order(order)
             except ValueError as exc:
+                if from_sqs:
+                    raise
                 logger.warning("rejecting order error=%s raw=%s", exc, order)
                 stats["failed"] += 1
                 _send_to_dlq(source=source, reason=str(exc), order=order)
                 continue
 
             try:
-                result = writer.put(item)
+                if bronze_bucket and message is not None:
+                    # Acknowledge only after both sinks succeed. Both writes can be replayed.
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        archive = executor.submit(write_order, bronze_bucket, order, message)
+                        result = writer.put(item)
+                        archive.result()
+                else:
+                    result = writer.put(item)
             except Exception as exc:
+                if from_sqs:
+                    raise
                 # A write failure is not a validation problem, but the
                 # record still must not be lost. Send it to the DLQ and
                 # let the batch continue.
