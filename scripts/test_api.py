@@ -30,7 +30,7 @@ with contextlib.suppress(ImportError):
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "lambda", "ingestor"))
 
-from ghn_client import GhnClient, GhnClientError, STAGING_BASE_URL
+from ghn_client import STAGING_BASE_URL, GhnClient, GhnClientError
 from mock_source import MockGhnClient
 
 
