@@ -1,57 +1,33 @@
-"""Tests for the Ingestor handler's batch-level behaviour.
+"""Verify the master data job is isolated from the retired order poller."""
+import json
+from unittest.mock import Mock, patch
 
-The handler's job is to make sure a single bad record cannot cost us the
-whole batch. These tests exercise that partitioning directly.
-"""
-from __future__ import annotations
-
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-
-from handler import _partition_valid
-
-GOOD = {
-    "order_id": "1",
-    "order_code": "GHN1",
-    "from_province_id": 1,
-    "to_province_id": 2,
-    "status": "pending",
-    "created_at": "2026-01-01T00:00:00Z",
-}
-
-BAD_STATUS = dict(GOOD, order_code="GHN2", status="teleported")
-MISSING_FIELD = {k: v for k, v in dict(GOOD, order_code="GHN3").items() if k != "order_code"}
+import handler
 
 
-def test_valid_records_pass_through():
-    good, rejected = _partition_valid("orders", [dict(GOOD)])
-    assert len(good) == 1
-    assert rejected == []
+def test_legacy_order_schedule_is_ignored():
+    with patch.object(handler, "make_client") as make_client:
+        result = handler.lambda_handler({"sources": ["orders", "shipping_status"]}, None)
+    make_client.assert_not_called()
+    assert result["written"] == {}
 
 
-def test_one_bad_record_does_not_discard_the_batch():
-    good, rejected = _partition_valid("orders", [dict(GOOD), dict(BAD_STATUS), dict(GOOD, order_code="GHN4")])
-    assert len(good) == 2
-    assert len(rejected) == 1
+def test_master_data_refresh_archives_only_master_data():
+    records = [{"entity": "province"}, {"entity": "district"}, {"entity": "ward"}]
+    api = Mock()
+    api.fetch_master_data.return_value = records
+    s3 = Mock()
+    with (
+        patch.object(handler, "make_client", return_value=api),
+        patch.dict("os.environ", {"GHN_WARD_DISTRICTS": "101, 202"}),
+        patch.dict("sys.modules", {"boto3": Mock(client=Mock(return_value=s3))}),
+    ):
+        result = handler.lambda_handler({"sources": ["master_data"]}, None)
 
-
-def test_rejected_record_keeps_the_original_and_the_reason():
-    _, rejected = _partition_valid("orders", [dict(BAD_STATUS)])
-    assert rejected[0]["record"]["order_code"] == "GHN2"
-    assert "unknown status" in rejected[0]["reason"]
-
-
-def test_missing_field_is_rejected():
-    good, rejected = _partition_valid("orders", [dict(MISSING_FIELD)])
-    assert good == []
-    assert len(rejected) == 1
-
-
-def test_non_order_sources_are_not_record_validated():
-    """Master data and shipping status are validated as a whole, not per record."""
-    records = [{"entity": "province"}, {"anything": 1}]
-    good, rejected = _partition_valid("master_data", records)
-    assert good == records
-    assert rejected == []
+    api.fetch_master_data.assert_called_once_with(ward_district_ids=[101, 202])
+    api.fetch_orders.assert_not_called()
+    s3.put_object.assert_called_once()
+    write = s3.put_object.call_args.kwargs
+    assert write["Key"].startswith("raw/master_data/")
+    assert json.loads(write["Body"])["records"] == records
+    assert result["written"]["master_data"]["count"] == len(records)
