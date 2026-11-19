@@ -110,6 +110,116 @@ what you test locally is what runs in AWS.
 cp .env.example .env
 ```
 
+### Chạy demo local và kiểm tra dữ liệu
+
+Luồng local dùng LocalStack cho S3, DynamoDB, SQS và Lambda; MinIO lưu Bronze/Iceberg; Trino dùng để truy vấn bảng Iceberg. Từ PowerShell tại thư mục gốc repository:
+
+```powershell
+Copy-Item .env.example .env -ErrorAction SilentlyContinue
+docker compose up -d
+python -m pip install -r requirements-dev.txt
+python scripts/init_local_env.py
+python scripts/deploy_processor_local.py
+```
+
+Kiểm tra dịch vụ:
+
+```powershell
+docker compose ps
+Invoke-RestMethod http://localhost:4566/_localstack/health
+Invoke-RestMethod http://localhost:8080/v1/info
+Invoke-WebRequest http://localhost:9000/minio/health/live
+```
+
+Cách tạo đơn demo nhanh nhất không gọi GHN và không cần token là gửi webhook giả trực tiếp vào handler:
+
+```powershell
+python scripts/demo_webhook.py --status delivering
+python scripts/inspect_local_data.py
+python scripts/inspect_local_data.py --order-code <MA_DON_MAU>
+```
+
+Để tạo đơn thật trên GHN staging, điền `GHN_API_TOKEN`, `GHN_SHOP_ID` và giữ `GHN_BASE_URL=https://dev-online-gateway.ghn.vn` trong `.env`:
+
+```powershell
+python scripts/create_demo_order.py --dry-run --client-order-code STAGING-DEMO-001
+python scripts/create_demo_order.py --client-order-code STAGING-DEMO-001
+```
+
+Kết quả `order_code` được lưu vào `.local_staging_orders.jsonl`. Kiểm tra chi tiết đơn staging:
+
+```powershell
+$env:GHN_ORDER_CODES = "<MA_DON_GHN>"
+python scripts/test_api.py --endpoint orders --limit 1
+```
+
+Để nhận callback staging qua tunnel, chạy server local ở một terminal và forward cổng 8000 bằng ngrok hoặc Cloudflare Tunnel:
+
+```powershell
+python scripts/serve_webhook_local.py
+Invoke-RestMethod http://127.0.0.1:8000/health
+ngrok http 8000
+```
+
+Khai báo URL HTTPS của tunnel trong GHN Developer Portal cùng custom header `X-GHN-Webhook-Token` có giá trị giống `GHN_CALLBACK_SHARED_TOKEN`.
+
+### Kiểm tra từng nơi lưu dữ liệu
+
+Script tổng hợp đọc S3 Raw, hai bảng DynamoDB và SQS FIFO:
+
+```powershell
+python scripts/inspect_local_data.py --order-code <MA_DON>
+```
+
+Script này không xóa message SQS, nhưng việc nhận message sẽ tăng receive count.
+
+Kiểm tra S3 Raw trực tiếp bằng AWS CLI:
+
+```powershell
+$awsLocal = @("--endpoint-url", "http://localhost:4566", "--region", "ap-southeast-1")
+aws s3api list-objects-v2 --bucket ghn-analytics-local-raw @awsLocal
+aws s3 cp s3://ghn-analytics-local-raw/ ./tmp-raw --recursive @awsLocal
+```
+
+Kiểm tra DynamoDB:
+
+```powershell
+aws dynamodb list-tables @awsLocal
+aws dynamodb scan --table-name ghn-analytics-local-watchlist @awsLocal
+aws dynamodb scan --table-name ghn-analytics-local-orders @awsLocal
+```
+
+Kiểm tra SQS FIFO và DLQ:
+
+```powershell
+aws sqs list-queues --queue-name-prefix ghn-analytics-local @awsLocal
+aws sqs get-queue-url --queue-name ghn-analytics-local-webhook.fifo @awsLocal
+```
+
+Kiểm tra Bronze trong MinIO bằng AWS CLI:
+
+```powershell
+$awsMinio = @("--endpoint-url", "http://localhost:9000", "--region", "ap-southeast-1")
+$env:AWS_ACCESS_KEY_ID = "admin"
+$env:AWS_SECRET_ACCESS_KEY = "password123"
+aws s3api list-buckets @awsMinio
+aws s3api list-objects-v2 --bucket ghn-analytics-bronze @awsMinio
+aws s3 cp s3://ghn-analytics-bronze/ ./tmp-bronze --recursive @awsMinio
+```
+
+MinIO Console mở tại <http://localhost:9001>, đăng nhập bằng `admin` và `password123`. Trino mở tại <http://localhost:8080>. Truy vấn thử bảng Iceberg qua Trino:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://localhost:8080/v1/statement -Headers @{ "X-Trino-User" = "local" } -ContentType "text/plain" -Body "SHOW TABLES FROM iceberg.default"
+Invoke-RestMethod -Method Post -Uri http://localhost:8080/v1/statement -Headers @{ "X-Trino-User" = "local" } -ContentType "text/plain" -Body "SELECT * FROM iceberg.default.ghn_events LIMIT 20"
+```
+
+Sau khi sửa code Processor, chạy lại `python scripts/deploy_processor_local.py`. Khi dừng môi trường local:
+
+```powershell
+docker compose down
+```
+
 ## Deploying
 
 ```bash
