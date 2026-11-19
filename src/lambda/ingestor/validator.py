@@ -1,31 +1,20 @@
-"""Schema validation for records coming out of the GHN API.
-
-The validator is deliberately strict: a record that cannot be validated is
-rejected at the boundary rather than being silently written downstream.
-"""
+"""Schema validation for records coming out of the GHN API."""
 from __future__ import annotations
 
 from typing import Any
 
-# GHN's status vocabulary, from the GHN docs' "Order Status Codes" page.
-# GHN returns the raw values; the transform layer maps them onto the
-# normalised set.
 GHN_STATUSES = frozenset(
     {
-        # pickup phase
         "ready_to_pick",
         "picking",
         "money_collect_picking",
         "picked",
-        # warehouse / transit phase
         "storing",
         "sorting",
         "transporting",
         "delivering",
         "money_collect_delivering",
-        # final: delivered
         "delivered",
-        # delivery-failure / return-to-sender phase
         "delivery_fail",
         "waiting_to_return",
         "return",
@@ -33,9 +22,7 @@ GHN_STATUSES = frozenset(
         "return_sorting",
         "returning",
         "return_fail",
-        # final: returned
         "returned",
-        # final: cancelled / abnormal
         "cancel",
         "exception",
         "lost",
@@ -44,7 +31,6 @@ GHN_STATUSES = frozenset(
     }
 )
 
-# The normalised vocabulary used by the warehouse and the dashboards.
 VALID_STATUSES = frozenset(
     {
         "pending",
@@ -57,8 +43,6 @@ VALID_STATUSES = frozenset(
     }
 )
 
-# Maps each GHN status onto the normalised one. Anything not listed
-# here is rejected rather than silently bucketed.
 STATUS_NORMALISATION = {
     "ready_to_pick": "pending",
     "picking": "picked",
@@ -87,20 +71,13 @@ STATUS_NORMALISATION = {
 
 
 def normalise_status(status: str) -> str:
-    """Map a GHN status onto the project's normalised status.
-
-    Raises ValueError for an unknown status.
-    """
+    """Map a GHN status onto the project's normalised status."""
     try:
         return STATUS_NORMALISATION[status]
     except KeyError:
         raise ValueError(f"unknown GHN status {status!r}") from None
 
 
-# The GHN order detail guarantees order_code, status and a creation
-# timestamp; province/district ids are NOT in the API response (addresses
-# are free text), so they stay optional throughout the warehouse.
-# order_id is optional too: the normaliser falls back to order_code.
 REQUIRED_ORDER_FIELDS = (
     "order_code",
     "status",
@@ -113,7 +90,7 @@ class ValidationError(ValueError):
 
 
 def validate_order(order: dict[str, Any]) -> None:
-    """Validate a single order record. Raises ValidationError on failure."""
+    """Validate a single order record."""
     if not isinstance(order, dict):
         raise ValidationError(f"order must be an object, got {type(order).__name__}")
 
@@ -133,12 +110,7 @@ def validate_order(order: dict[str, Any]) -> None:
 
 
 def validate_master_data(records: list[dict[str, Any]]) -> None:
-    """Validate the master data record list as a whole.
-
-    Province and district are required; ward is optional, because the
-    ward endpoint only answers per district and the Ingestor fetches
-    wards for a bounded district list.
-    """
+    """Validate the master data record list as a whole."""
     if not records:
         raise ValidationError("master data is empty")
 
