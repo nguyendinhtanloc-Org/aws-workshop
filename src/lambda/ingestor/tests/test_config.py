@@ -25,11 +25,7 @@ def test_missing_token_raises_a_helpful_error():
 
 
 def test_importing_config_does_not_call_aws():
-    """Importing the module must not perform a Secrets Manager call.
-
-    This is what keeps unit tests and local scripts free of AWS
-    credentials and network access.
-    """
+    """Importing the module must not perform a Secrets Manager call."""
     import ingestor_config as config
 
     assert hasattr(config, "get_config")
