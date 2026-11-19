@@ -10,45 +10,19 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# The current GHN open API, per GHN's "API Environments" table:
-#   production  https://online-gateway.ghn.vn
-#   staging     https://dev-online-gateway.ghn.vn
-#
-# Authentication is two headers: Token (API key) and ShopId. Both must be
-# set - the router can reject requests that are missing ShopId with a
-# routing 404.
-#
 BASE_URL = os.environ.get("GHN_BASE_URL", "https://online-gateway.ghn.vn").rstrip("/")
 STAGING_BASE_URL = "https://dev-online-gateway.ghn.vn"
-# Path prefix the gateway mounts the public API under. Overridable because
-# GHN has moved it between generations - confirm it from the endpoint
-# URLs in the GHN docs' "Open endpoint" pages.
-# Confirmed from the GHN docs (https://developer.ghn.dev), which show
-# full request URLs of the form:
-#   GET {gateway}/shiip/public-api/master-data/province
-#   GET {gateway}/shiip/public-api/master-data/district
-#   GET {gateway}/shiip/public-api/master-data/ward
-#   GET {gateway}/shiip/public-api/v2/shipping-order/detail
 API_PREFIX = os.environ.get("GHN_API_PREFIX", "/shiip/public-api")
 
-# Endpoint paths, confirmed against the live dev gateway:
-#   GET /master-data/province           200
-#   GET /master-data/district           200
-#   GET /master-data/ward?district_id=N 200 (district_id is required)
-#   GET /v2/shipping-order/detail?order_code=X 200 (query param is
-#   snake_case, confirmed live; the gateway's 400 message shows the Go
-#   struct name "OrderCode" but that is not the param name)
-# There is no list-orders endpoint in this API generation: orders are
-# fetched by code, and status *changes* are pushed by webhook.
 ENDPOINTS: dict[str, str] = {
     "provinces": "/master-data/province",
     "districts": "/master-data/district",
     "wards": "/master-data/ward",
     "orders": "/v2/shipping-order/detail",
-    # POST: creates a shipping order. There is no list-orders route, so
-    # the order_code from this response's data field is what the detail
-    # route (orders) is polled with.
+    "shops": "/v2/shop/all",
     "create_order": "/v2/shipping-order/create",
+    "update_order": "/v2/shipping-order/update",
+    "cancel_orders": "/v2/switch-status/cancel",
 }
 TIMEOUT_SECONDS = 15
 MAX_RETRIES = 3
@@ -56,13 +30,7 @@ BACKOFF_BASE_SECONDS = 1.0
 
 
 def _as_records(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Normalise a gateway response body into a list of records.
-
-    The gateway generations disagree on the wrapper: some answer
-    {"code": ..., "data": [...]}, some answer a bare list. Both are
-    accepted so the client does not have to be edited when the shape
-    changes.
-    """
+    """Normalise a gateway response body into a list of records."""
     data = payload.get("data", payload) if isinstance(payload, dict) else payload
     if data is None:
         return []
@@ -76,11 +44,7 @@ class GhnClientError(RuntimeError):
 
 
 class GhnClient:
-    """Reads order and master data from the GHN open API.
-
-    Handles the two failure modes the proposal calls out: rate limiting
-    (HTTP 429) and transient 5xx. Both use exponential backoff with jitter.
-    """
+    """Reads order and master data from the GHN open API."""
 
     def __init__(
         self,
@@ -95,8 +59,7 @@ class GhnClient:
         self._session.headers.update({"Content-Type": "application/json"})
 
     def _headers(self) -> dict[str, str]:
-        """The current gateway authenticates on two headers: Token and
-        ShopId. The token is never logged or written to URLs."""
+        """The current gateway authenticates on two headers: Token and ShopId."""
         headers = {"Token": self._token}
         if self._shop_id:
             headers["ShopId"] = self._shop_id
@@ -140,21 +103,20 @@ class GhnClient:
         raise GhnClientError(f"GHN API failed after {MAX_RETRIES} attempts path={path}: {last_error}")
 
     def create_order(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Create a shipping order; return the response's data object.
-
-        Carries order_code (poll it via the detail route), the fee
-        breakdown and expected_delivery_time.
-        """
+        """Create a shipping order; return the response's data object."""
         response = self._post(ENDPOINTS["create_order"], payload)
         return dict(response.get("data") or {})
 
-    def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """GET an endpoint, retrying transient failures with backoff.
+    def update_order(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Update the supplied fields of an existing GHN order."""
+        return self._post(ENDPOINTS["update_order"], payload)
 
-        Only a 429 or a 5xx is retried; a 4xx is a client error and is
-        raised immediately. The wait happens between attempts, so the
-        final failed attempt does not sleep before the error is raised.
-        """
+    def cancel_orders(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Cancel orders; callers must also inspect each data[].result."""
+        return self._post(ENDPOINTS["cancel_orders"], payload)
+
+    def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """GET an endpoint, retrying transient failures with backoff."""
         url = self._url_for(path)
         last_error: Exception | None = None
 
@@ -195,7 +157,6 @@ class GhnClient:
                         )
                     return payload
 
-            # Wait before the next attempt, but not after the last one.
             if retryable and attempt < MAX_RETRIES - 1:
                 delay = BACKOFF_BASE_SECONDS * (2**attempt)
                 logger.info("retrying path=%s in %.1fs", path, delay)
@@ -203,24 +164,10 @@ class GhnClient:
 
         raise GhnClientError(f"GHN API failed after {MAX_RETRIES} attempts path={path}: {last_error}")
 
-    # --------------------------------------------------------------
-    # The fetch methods operate through the endpoint paths pinned
-    # above. The GHN docs deliver order-status changes by webhook
-    # rather than a pollable status list, so shipping_status reuses
-    # the orders endpoint.
     def fetch_master_data(
         self, ward_district_ids: list[int] | None = None
     ) -> list[dict[str, Any]]:
-        """Return provinces, districts and wards as one flat record list.
-
-        Provinces and districts are fetched in one call each. The ward
-        endpoint requires a district_id, so wards are only fetched for
-        the districts named in ward_district_ids (a bounded, deliberate
-        set - the full district list is too large to fan out over on
-        every scheduled run). When the list is empty no ward records
-        are produced; the master-data validator treats ward as
-        optional.
-        """
+        """Return provinces, districts and wards as one flat record list."""
         records: list[dict[str, Any]] = []
         for entity, key in (("province", "provinces"), ("district", "districts")):
             payload = self._get(ENDPOINTS[key])
@@ -233,13 +180,7 @@ class GhnClient:
         return records
 
     def fetch_orders(self, order_codes: list[str] | None = None) -> list[dict[str, Any]]:
-        """Return the shipping-order detail for each code in the watchlist.
-
-        The API has no list-orders route: shipping-order/detail is
-        required order_code query param, so the Ingestor polls a configured seed
-        list (GHN_ORDER_CODES). Each response is a single order detail
-        object (or a list of them - _as_records accepts both).
-        """
+        """Return the shipping-order detail for each code in the watchlist."""
         codes = order_codes or []
         if not codes:
             return []
@@ -255,4 +196,15 @@ class GhnClient:
         if not records and last_error is not None:
             raise last_error
         return records
+
+    def fetch_shops(self, offset: int = 0, limit: int = 20) -> list[dict[str, Any]]:
+        """List shops visible to this token; each ``_id`` is a ShopId."""
+        payload = self._get(
+            ENDPOINTS["shops"], params={"offset": offset, "limit": limit}
+        )
+        data = payload.get("data", {})
+        if isinstance(data, dict):
+            shops = data.get("shops", [])
+            return [dict(shop) for shop in shops if isinstance(shop, dict)]
+        return _as_records(payload)
 
