@@ -40,7 +40,7 @@ def test_negative_weight_raises():
 
 def test_non_dict_raises():
     with pytest.raises(ValidationError, match="must be an object"):
-        validate_order(["not", "a", "dict"])  # type: ignore[arg-type]
+        validate_order(["not", "a", "dict"])
 
 
 def test_master_data_requires_province_and_district():
@@ -76,7 +76,7 @@ def test_ghn_native_statuses_are_accepted():
     """The GHN API's own status vocabulary must pass validation."""
     from validator import GHN_STATUSES
 
-    assert len(GHN_STATUSES) >= 20  # the real vocabulary is large
+    assert len(GHN_STATUSES) >= 20
     for status in GHN_STATUSES:
         validate_order(dict(VALID_ORDER, status=status))
 
@@ -94,8 +94,6 @@ def test_genuinely_unknown_status_is_rejected():
 def test_normalise_status_maps_ghn_values():
     from validator import normalise_status
 
-    # Spot-check the mapping table: final states map to final
-    # normalised values, in-flight phases map to in_transit/picked.
     assert normalise_status("ready_to_pick") == "pending"
     assert normalise_status("money_collect_picking") == "picked"
     assert normalise_status("storing") == "in_transit"
