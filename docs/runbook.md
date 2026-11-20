@@ -165,7 +165,7 @@ cdk diff --app "python cdk/app.py --minimal"   # review (minimal: skip Glue/Athe
 cdk deploy --all --app "python cdk/app.py --minimal" --require-approval never
 ```
 
-Drop `--minimal` to include the analytics (Glue + Athena) and monitoring stacks.
+Drop `--minimal` to include the analytics (Athena + Glue catalog) and monitoring stacks.
 To roll back a bad deploy: `cdk deploy --all --app "python cdk/app.py"` after
 reverting the commit, or use the CloudFormation console's rollback action.
 Raw and curated data are not destroyed by a stack rollback (both buckets use

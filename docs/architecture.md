@@ -125,8 +125,8 @@ base
 Phần hạ tầng thuộc kiến trúc cũ (polling + Kinesis Firehose + Glue PySpark):
 
 - `cdk/stacks/streaming_stack.py` (Kinesis Data Streams + Firehose)
-- `cdk/stacks/analytics_stack.py` (2 Glue ETL job PySpark, Step Functions chạy Glue)
-- `src/glue/jobs/bronze_to_silver.py`, `silver_to_gold.py`
+- `src/glue/jobs/bronze_to_silver.py`, `silver_to_gold.py` (2 Glue ETL job PySpark —
+  đã gỡ khỏi `AnalyticsStack`, chỉ còn tồn tại trong repo, đã đánh deprecated)
 - EventBridge 5-minute polling trong `ingestion_stack.py`
 
 Chưa có trong repo (mục ở `docs/PROPOSAL.md` mục 12):

@@ -1,4 +1,9 @@
-"""Glue ETL job: curated (bronze) -> query-ready silver Parquet tables.
+"""DEPRECATED - do not run. Silver curation moved to Athena/Trino MERGE INTO
+Iceberg (sql/02, ADR 005); this Glue PySpark job was the Firehose-era path and
+was removed from AnalyticsStack. Kept in-repo for reference only; delete with
+the rest of the legacy Glue jobs in the next cleanup PR.
+
+Glue ETL job: curated (bronze) -> query-ready silver Parquet tables.
 
 The curated layer is written by Firehose as gzip-compressed JSON. This job
 reads it back, applies the silver transformation rules, and writes typed,

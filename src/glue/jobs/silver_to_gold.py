@@ -1,4 +1,10 @@
-"""Glue ETL job: silver orders -> gold aggregate tables for QuickSight."""
+"""DEPRECATED - do not run. Gold KPIs are now computed by Athena/Trino SQL
+(sql/06_build_daily_kpis.sql; SQL is the single source of truth for
+ghn_analytics.delivery_kpis). This Glue job wrote a divergent, KPI-mismatched
+gold_daily_kpis/gold_province_kpis and was removed from AnalyticsStack.
+Kept in-repo for reference only; delete in the next cleanup PR.
+
+Original purpose: Glue ETL job, silver orders -> gold aggregate tables."""
 from __future__ import annotations
 
 import sys
