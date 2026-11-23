@@ -118,7 +118,7 @@ def bronze_storage(monkeypatch):
 
 
 def test_real_http_localstack_duplicate_and_failures(local_http, monkeypatch, bronze_storage):
-    base, s3, ddb, sqs, bucket, table_name, queue_url = local_http
+    base, s3, _ddb, sqs, bucket, table_name, queue_url = local_http
     code = "TEST-" + uuid.uuid4().hex[:10]
     # Shape follows GHN's published callback example; values here are test data.
     callback = {
