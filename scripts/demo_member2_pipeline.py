@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Demo trực quan end-to-end cho Member 2:
 1. Nhận chuỗi sự kiện SQS FIFO của một đơn hàng GHN.
 2. Xử lý qua Transformer + Two-Level State Machine.
@@ -7,22 +8,15 @@
 """
 from __future__ import annotations
 
-import datetime as _dt
-if not hasattr(_dt, "UTC"):
-    _dt.UTC = _dt.timezone.utc
-
-import json
-import os
 import sys
-from decimal import Decimal
-from pprint import pprint
+from pathlib import Path
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "src/lambda/processor"))
-sys.path.insert(0, os.path.join(ROOT, "src"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "src" / "lambda" / "processor"))
 
-from ddb_writer import OrderWriter, WriteResult
-from transformer import transform_order
+from ddb_writer import OrderWriter, WriteResult  # noqa: E402
+from transformer import transform_order  # noqa: E402
 
 
 class LocalDynamoDBStorage:
@@ -75,7 +69,7 @@ class LocalDynamoDBStorage:
         self.items[key] = Item
 
 
-def run_demo():
+def run_demo() -> None:
     print("=" * 80)
     print("🚀 CHẠY THỬ NGHIỆM ĐẦY ĐỦ LUỒNG XỬ LÝ CỦA MEMBER 2 (SERVING & DYNAMODB)")
     print("=" * 80)
@@ -220,8 +214,8 @@ def run_demo():
         "Lượt giao hàng (delivery_attempt)": current_item["delivery_attempt"],
         "Thứ tự giai đoạn (phase_rank)": current_item["phase_rank"],
         "Thời gian giao hàng (lead_time_hours)": f"{current_item.get('lead_time_hours')} giờ",
-        "Tiền thu hộ (COD)": f"{current_item.get('cod_amount'):,} VNĐ" if current_item.get('cod_amount') else "0 VNĐ",
-        "Cước vận chuyển (shipping_fee)": f"{current_item.get('shipping_fee'):,} VNĐ" if current_item.get('shipping_fee') else "0 VNĐ",
+        "Tiền thu hộ (COD)": f"{current_item.get('cod_amount'):,} VNĐ" if current_item.get("cod_amount") else "0 VNĐ",
+        "Cước vận chuyển (shipping_fee)": f"{current_item.get('shipping_fee'):,} VNĐ" if current_item.get("shipping_fee") else "0 VNĐ",
         "Khối lượng (weight)": f"{current_item.get('weight')} kg",
         "Thời điểm tạo (created_at)": current_item["created_at"],
         "Thời điểm giao thành công (delivered_at)": current_item.get("delivered_at"),
