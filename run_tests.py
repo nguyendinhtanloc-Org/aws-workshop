@@ -108,6 +108,7 @@ TEST_FILES = [
     "src/lambda/ingestor/tests/test_reconciler.py",
     "src/lambda/processor/tests/test_transformer.py",
     "src/lambda/processor/tests/test_ddb_writer.py",
+    "src/lambda/processor/tests/test_fifo_handler.py",
     "src/glue/tests/test_quality.py",
     "src/glue/tests/test_partitioning.py",
     "src/glue/tests/test_schema.py",

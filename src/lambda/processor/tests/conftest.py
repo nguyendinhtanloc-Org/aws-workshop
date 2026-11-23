@@ -11,8 +11,12 @@ directories in this repo are all named ``tests``; without ``__init__.py``
 pytest imports each by its own path instead of as a package, so they do
 not collide in ``sys.modules``.
 """
+import datetime as _dt
 import os
 import sys
+
+if not hasattr(_dt, "UTC"):
+    _dt.UTC = _dt.timezone.utc
 
 _PACKAGE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _PACKAGE_ROOT not in sys.path:
