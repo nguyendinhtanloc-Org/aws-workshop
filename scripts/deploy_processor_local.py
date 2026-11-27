@@ -12,7 +12,11 @@ import zipfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional for standalone unit test runs
+    def load_dotenv(*_args: object, **_kwargs: object) -> bool:
+        return False
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:

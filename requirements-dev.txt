@@ -15,7 +15,8 @@ boto3==1.35.76
 moto[dynamodb,s3,sqs,glue,athena]==5.0.24
 pyarrow==19.0.1
 python-dotenv==1.0.1
+requests==2.32.5
 
 # Types
 boto3-stubs==1.35.76
-requests==2.32.5
+types-requests==2.32.0.20250328
