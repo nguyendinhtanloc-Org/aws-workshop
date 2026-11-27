@@ -16,6 +16,7 @@ Uses the active interpreter's pip (run it from your venv).
 """
 from __future__ import annotations
 
+import argparse
 import shutil
 import subprocess
 import sys
@@ -29,9 +30,22 @@ FUNCTIONS = {
     "lambda-processor": "src/lambda/processor",
 }
 
+ARCH_PLATFORMS = {
+    "arm64": "manylinux2014_aarch64",
+    "x86_64": "manylinux2014_x86_64",
+}
 
-def build(name: str, source_dir: Path) -> Path:
-    out = ROOT / "build" / name
+
+def build(
+    name: str,
+    source_dir: Path,
+    arch: str = "arm64",
+    out_dir: Path | None = None,
+) -> Path:
+    if arch not in ARCH_PLATFORMS:
+        raise ValueError(f"unsupported Lambda architecture {arch!r}; expected one of {sorted(ARCH_PLATFORMS)}")
+    platform_tag = ARCH_PLATFORMS[arch]
+    out = out_dir if out_dir is not None else ROOT / "build" / name
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
 
@@ -47,13 +61,12 @@ def build(name: str, source_dir: Path) -> Path:
 
     reqs = source_dir / "requirements.txt"
     if reqs.exists():
-        print(f"[{name}] pip install (linux/amd64...aarch64, cp312) -> {out.relative_to(ROOT)}/")
-        # Cross-target the install at the exact target of the deployed
-        # runtime: Lambda ARM_64 = Linux aarch64 + CPython 3.12 (the
-        # pinned Lambda runtime). Without --platform/--python-version,
-        # pip would pick wheels for the *local* machine (macOS arm64,
-        # Python 3.13 on a dev box) and the Lambda import would fail with
-        # an incompatible-binary error.
+        print(f"[{name}] pip install ({platform_tag}, cp312) -> {out.relative_to(ROOT)}/")
+        # Cross-target the install at the target Lambda runtime (Linux + CPython 3.12):
+        # AWS CDK deploys ARM_64 (manylinux2014_aarch64), while LocalStack on x86_64
+        # hosts needs x86_64 (manylinux2014_x86_64). Without --platform/--python-version,
+        # pip would pick wheels for the *local* machine (macOS/Windows, Python 3.13+)
+        # and the Lambda import would fail with an incompatible-binary error.
         # --only-binary=:all: forces resolution against wheel tags only,
         # which is what makes cross-targeting safe.
         # The pip timeouts / retries below are widened for low-bandwidth
@@ -65,7 +78,7 @@ def build(name: str, source_dir: Path) -> Path:
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "-q",
              "-r", str(reqs), "--target", str(out), "--no-cache-dir",
-             "--platform", "manylinux2014_aarch64",
+             "--platform", platform_tag,
              "--python-version", "3.12",
              "--implementation", "cp",
              "--abi", "cp312",
@@ -74,20 +87,28 @@ def build(name: str, source_dir: Path) -> Path:
              "--retries", "10"],
             check=True,
         )
-    _verify_wheel_tags(out)
+    _verify_wheel_tags(out, arch=arch)
     print(f"[{name}] built {out.relative_to(ROOT)}/")
     return out
 
 
-def _verify_wheel_tags(out: Path) -> None:
+def _verify_wheel_tags(out: Path, arch: str = "arm64") -> None:
     """Fail early if a wrong-platform wheel snuck into the package."""
+    forbidden_arch = "x86_64" if arch == "arm64" else "aarch64"
     bad = []
     for wheel in out.glob("*/*.dist-info/WHEEL"):
-        for line in wheel.read_text().splitlines():
+        for line in wheel.read_text(encoding="utf-8").splitlines():
             if not line.startswith("Tag:"):
                 continue
             tag = line.split(":", 1)[1].strip()
-            if "macosx" in tag or tag.endswith(tuple(f"cp{v}" for v in range(313, 320))):
+            if (
+                "macosx" in tag
+                or "win32" in tag
+                or "win_amd64" in tag
+                or "win_arm64" in tag
+                or forbidden_arch in tag
+                or tag.endswith(tuple(f"cp{v}" for v in range(313, 320)))
+            ):
                 bad.append((wheel.parent.name, tag))
     if bad:
         raise SystemExit(
@@ -97,8 +118,16 @@ def _verify_wheel_tags(out: Path) -> None:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--arch",
+        choices=sorted(ARCH_PLATFORMS),
+        default="arm64",
+        help="target Lambda architecture (default: arm64 for AWS CDK)",
+    )
+    args = parser.parse_args()
     for name, rel in FUNCTIONS.items():
-        build(name, ROOT / rel)
+        build(name, ROOT / rel, arch=args.arch)
     print("\nbuild/ ready - run cdk deploy")
     return 0
 
