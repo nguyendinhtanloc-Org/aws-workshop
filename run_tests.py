@@ -112,6 +112,7 @@ TEST_FILES = [
     "src/glue/tests/test_quality.py",
     "src/glue/tests/test_partitioning.py",
     "src/glue/tests/test_schema.py",
+    "tests/test_local_deploy.py",
 ]
 
 

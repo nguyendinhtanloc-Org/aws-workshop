@@ -18,3 +18,4 @@ python-dotenv==1.0.1
 
 # Types
 boto3-stubs==1.35.76
+requests==2.32.5

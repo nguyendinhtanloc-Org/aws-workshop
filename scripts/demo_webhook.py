@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Create a visible fake webhook in local Docker services.
 
 Usage:
@@ -11,6 +11,7 @@ Webhook Lambda handler locally, which writes S3 Raw, Watchlist, and FIFO.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import hmac
 import json
@@ -20,6 +21,11 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+with contextlib.suppress(ImportError):
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 try:
     import boto3
@@ -60,8 +66,8 @@ def main() -> int:
     args = parser.parse_args()
 
     endpoint = os.environ.get("LOCALSTACK_ENDPOINT", DEFAULT_ENDPOINT).rstrip("/")
-    bucket = os.environ.get("RAW_BUCKET_NAME", DEFAULT_BUCKET)
-    table_name = os.environ.get("ORDER_WATCHLIST_TABLE", DEFAULT_WATCHLIST)
+    bucket = os.environ.get("LOCAL_RAW_BUCKET_NAME", DEFAULT_BUCKET)
+    table_name = os.environ.get("LOCAL_WATCHLIST_TABLE_NAME", DEFAULT_WATCHLIST)
     queue_name = os.environ.get("LOCAL_WEBHOOK_QUEUE_NAME", DEFAULT_QUEUE)
     secret = os.environ.get("GHN_WEBHOOK_SECRET", "local-demo-secret")
 
@@ -83,7 +89,7 @@ def main() -> int:
     except Exception as exc:
         raise SystemExit(
             f"Khong thay tai nguyen LocalStack ({exc}). Hay chay truoc:\n"
-            "  docker compose -f docker-compose.local.yml up -d\n"
+            "  docker compose up -d\n"
             "  python scripts/init_local_env.py"
         ) from exc
 
@@ -115,6 +121,7 @@ def main() -> int:
             "RAW_BUCKET_NAME": bucket,
             "ORDER_WATCHLIST_TABLE": table_name,
             "WEBHOOK_SQS_URL": queue_url,
+            "GHN_WEBHOOK_AUTH_MODE": "hmac",
             "GHN_WEBHOOK_SECRET": secret,
         }
     )

@@ -94,10 +94,14 @@ python scripts/test_processor_lambda_local.py
 
 The Lambda writes Orders to DynamoDB and archives events to MinIO Bronze
 (JSON objects and an Iceberg table committed through Trino). It does not write
-to curated. Stop `scripts/run_processor_local.py` while the Lambda mapping is
-enabled. Run deployment again after changing Processor code. The verification
-script leaves one uniquely named test order and its Bronze event for inspection.
-Failed messages retry through SQS and move to the processor FIFO DLQ after five
+to curated. `deploy_processor_local.py` automatically detects your Docker/host
+architecture (`x86_64` or `arm64`, overrideable with `LOCAL_LAMBDA_ARCH`) and
+pulls the matching Python 3.12 Lambda runtime image, so it works on Windows,
+macOS (Intel/Apple Silicon), and Linux without manual changes. Stop
+`scripts/run_processor_local.py` while the Lambda mapping is enabled. Run
+deployment again after changing Processor code. The verification script leaves
+one uniquely named test order and its Bronze event for inspection. Failed
+messages retry through SQS and move to the processor FIFO DLQ after five
 receives. LocalStack 3.8 Community resources are ephemeral across container
 recreation, so rerun initialization and deployment afterwards.
 
@@ -210,8 +214,8 @@ aws s3 cp s3://ghn-analytics-bronze/ ./tmp-bronze --recursive @awsMinio
 MinIO Console mở tại <http://localhost:9001>, đăng nhập bằng `admin` và `password123`. Trino mở tại <http://localhost:8080>. Truy vấn thử bảng Iceberg qua Trino:
 
 ```powershell
-Invoke-RestMethod -Method Post -Uri http://localhost:8080/v1/statement -Headers @{ "X-Trino-User" = "local" } -ContentType "text/plain" -Body "SHOW TABLES FROM iceberg.default"
-Invoke-RestMethod -Method Post -Uri http://localhost:8080/v1/statement -Headers @{ "X-Trino-User" = "local" } -ContentType "text/plain" -Body "SELECT * FROM iceberg.default.ghn_events LIMIT 20"
+Invoke-RestMethod -Method Post -Uri http://localhost:8080/v1/statement -Headers @{ "X-Trino-User" = "local" } -ContentType "text/plain" -Body "SHOW TABLES FROM iceberg.bronze"
+Invoke-RestMethod -Method Post -Uri http://localhost:8080/v1/statement -Headers @{ "X-Trino-User" = "local" } -ContentType "text/plain" -Body "SELECT * FROM iceberg.bronze.ghn_events LIMIT 20"
 ```
 
 Sau khi sửa code Processor, chạy lại `python scripts/deploy_processor_local.py`. Khi dừng môi trường local:

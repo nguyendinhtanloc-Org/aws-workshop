@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Print local S3 JSON, DynamoDB items and up to 10 available SQS messages.
 
 Usage:
@@ -10,10 +10,17 @@ Receiving increments their receive count; use this against the local demo queue.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import gzip
 import json
 import os
 import sys
+from pathlib import Path
+
+with contextlib.suppress(ImportError):
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 ENDPOINT = os.environ.get("LOCALSTACK_ENDPOINT", "http://localhost:4566")
 REGION = "ap-southeast-1"
